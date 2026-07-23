@@ -5291,11 +5291,23 @@ function igniteCell(w, j) {
 const L_NONE = Liquid.None;
 const L_FUEL = Liquid.Fuel;
 const L_COOL = Liquid.Coolant;
+function glowBlocked(w, x0, y0, x1, y1) {
+  const steps = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0));
+  for (let s2 = 1; s2 < steps; s2++) {
+    const cx = x0 + Math.round((x1 - x0) * s2 / steps);
+    const cy = y0 + Math.round((y1 - y0) * s2 / steps);
+    const m = w.mat[cy * W + cx];
+    if (m === Mat.Wall || m === Mat.Hull || m === Mat.DoorClosed || m === Mat.Machine || m === Mat.Tree)
+      return true;
+  }
+  return false;
+}
 function stampFireGlow(w, x, y) {
   const flick = 0.85 + 0.35 * noise2(x, y, w.tick >> 1 ^ 24301);
   const rEff = 3 + 3 * noise2(y, x, w.tick >> 2 ^ 3870);
-  const r2 = rEff * rEff;
-  const ri2 = Math.ceil(rEff);
+  const rOut = rEff + 1;
+  const r2 = rOut * rOut;
+  const ri2 = Math.ceil(rOut);
   for (let gy = -ri2; gy <= ri2; gy++) {
     const ay = y + gy;
     if (ay < 0 || ay >= H) continue;
@@ -5304,7 +5316,9 @@ function stampFireGlow(w, x, y) {
       if (dd > r2) continue;
       const ax = x + gx;
       if (ax < 0 || ax >= W) continue;
-      const gl = Math.sqrt(1 - Math.sqrt(dd) / (rEff + 1)) * flick;
+      const gl = Math.sqrt(Math.max(0, 1 - Math.sqrt(dd) / rOut)) * flick;
+      if (gl <= 0.02) continue;
+      if (dd > 2 && glowBlocked(w, x, y, ax, ay)) continue;
       const j2 = ay * W + ax;
       if (gl > w.fireGlow[j2]) w.fireGlow[j2] = gl;
     }
@@ -5320,8 +5334,9 @@ function stepBridgeGlow(w) {
     const y = i / W | 0;
     const amp = w.wirePowered[i] ? 1 : 0.62;
     const rEff = (3.5 + 1.5 * Math.sin(theta + (x + y) * 0.15)) * amp;
-    const r2 = rEff * rEff;
-    const ri2 = Math.ceil(rEff);
+    const rOut = rEff + 1;
+    const r2 = rOut * rOut;
+    const ri2 = Math.ceil(rOut);
     for (let gy = -ri2; gy <= ri2; gy++) {
       const ay = y + gy;
       if (ay < 0 || ay >= H) continue;
@@ -5330,7 +5345,8 @@ function stepBridgeGlow(w) {
         if (dd > r2) continue;
         const ax = x + gx;
         if (ax < 0 || ax >= W) continue;
-        const gl = 0.9 * amp * Math.sqrt(1 - Math.sqrt(dd) / (rEff + 1));
+        const gl = 0.9 * amp * Math.sqrt(Math.max(0, 1 - Math.sqrt(dd) / rOut));
+        if (gl <= 0.02) continue;
         const j2 = ay * W + ax;
         if (gl > w.bridgeGlow[j2]) w.bridgeGlow[j2] = gl;
       }
@@ -5349,8 +5365,9 @@ function stepFireAndDamage(w, rnd2) {
     const fade = 1 - age / 9;
     for (const [px2, py2] of [[sh.x0, sh.y0], [sh.x0 + sh.x1 >> 1, sh.y0 + sh.y1 >> 1], [sh.x1, sh.y1]]) {
       const gr = 1 + 2 * noise2(px2, py2, w.tick >> 1 ^ 36887);
-      const gr2 = gr * gr;
-      const gri = Math.ceil(gr);
+      const grOut = gr + 1;
+      const gr2 = grOut * grOut;
+      const gri = Math.ceil(grOut);
       for (let gy = -gri; gy <= gri; gy++) {
         const ay = py2 + gy;
         if (ay < 0 || ay >= H) continue;
@@ -5359,7 +5376,9 @@ function stepFireAndDamage(w, rnd2) {
           if (dd > gr2) continue;
           const ax = px2 + gx;
           if (ax < 0 || ax >= W) continue;
-          const gl = Math.sqrt(1 - Math.sqrt(dd) / (gr + 1)) * fade;
+          const gl = Math.sqrt(Math.max(0, 1 - Math.sqrt(dd) / grOut)) * fade;
+          if (gl <= 0.02) continue;
+          if (dd > 2 && glowBlocked(w, px2, py2, ax, ay)) continue;
           const j2 = ay * W + ax;
           if (gl > w.fireGlow[j2]) w.fireGlow[j2] = gl;
         }
