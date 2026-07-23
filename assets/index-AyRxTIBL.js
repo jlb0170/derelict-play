@@ -584,18 +584,30 @@ function takePlanStep(w, e, rnd2) {
   const avoid = e.home ?? -1;
   const ax = avoid >= 0 ? avoid % W : 0;
   const ay = avoid >= 0 ? avoid / W | 0 : 0;
+  const rcH = w.reactorAlive && w.reactorCells.length ? w.reactorCells[0] : -1;
+  const rhx = rcH >= 0 ? rcH % W : 0;
+  const rhy = rcH >= 0 ? rcH / W | 0 : 0;
+  const HEART_PULL = 2.5;
+  const POWER_BONUS = 40;
   const bests = [null, null, null];
   const dists = [Infinity, Infinity, Infinity];
   for (const plan of w.buildPlans) {
     if ((crewOf.get(plan) ?? 0) >= (plan.restore ? TUNE.restoreCrewCap : TUNE.draftCrewCap)) continue;
     if (plan.team !== void 0 && e.brain !== void 0 && plan.team !== e.brain) continue;
+    const heartPlan = rcH >= 0 && (plan.restore || plan.team !== void 0 && plan.team === e.brain);
     for (const st of plan.steps) {
       if (stepDone(w, st)) continue;
       if (claimedBy(st.i, e)) continue;
       if (avoid >= 0 && Math.abs(st.i % W - ax) + Math.abs((st.i / W | 0) - ay) <= 4) continue;
       const phase = st.m === Mat.Wall ? 2 : st.m === Mat.Machine ? 1 : 0;
       const d = Math.abs(st.i % W - e.x) + Math.abs((st.i / W | 0) - e.y);
-      if (d < dists[phase]) {
+      let cost = d;
+      if (heartPlan) {
+        const drH = Math.abs(st.i % W - rhx) + Math.abs((st.i / W | 0) - rhy);
+        cost += drH * HEART_PULL;
+        if (st.pp !== void 0 && st.pp & Pipe.Wire || st.mc === Machine.Light) cost -= POWER_BONUS;
+      }
+      if (cost < dists[phase]) {
         let standable = false;
         for (const nb of [st.i - 1, st.i + 1, st.i - W, st.i + W]) {
           if (nb >= 0 && nb < N && entPass(w.mat[nb])) {
@@ -604,7 +616,7 @@ function takePlanStep(w, e, rnd2) {
           }
         }
         if (!standable) continue;
-        dists[phase] = d;
+        dists[phase] = cost;
         bests[phase] = st;
       }
     }
