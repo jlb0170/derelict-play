@@ -145,6 +145,8 @@ class World {
     // chained plant detonations
     __publicField(this, "botanyOff", false);
     // test isolation: silence the green tide
+    __publicField(this, "arrivalsOff", false);
+    // test isolation: no unbidden castaway crews
     __publicField(this, "news", []);
     // the ship's bulletin wire, newest last
     __publicField(this, "nextSquadId", 1);
@@ -584,11 +586,21 @@ function takePlanStep(w, e, rnd2) {
   const avoid = e.home ?? -1;
   const ax = avoid >= 0 ? avoid % W : 0;
   const ay = avoid >= 0 ? avoid / W | 0 : 0;
-  const rcH = w.reactorAlive && w.reactorCells.length ? w.reactorCells[0] : -1;
+  let rcH = w.reactorAlive && w.reactorCells.length ? w.reactorCells[0] : -1;
+  const headless = rcH < 0;
+  if (headless && w.blueprint) {
+    for (let bi = 0; bi < w.blueprint.machine.length; bi++) {
+      if (w.blueprint.machine[bi] === Machine.Reactor) {
+        rcH = bi;
+        break;
+      }
+    }
+  }
   const rhx = rcH >= 0 ? rcH % W : 0;
   const rhy = rcH >= 0 ? rcH / W | 0 : 0;
   const HEART_PULL = 2.5;
   const POWER_BONUS = 40;
+  const CROWN_RUSH = 150;
   const bests = [null, null, null];
   const dists = [Infinity, Infinity, Infinity];
   for (const plan of w.buildPlans) {
@@ -599,7 +611,8 @@ function takePlanStep(w, e, rnd2) {
       if (stepDone(w, st)) continue;
       if (claimedBy(st.i, e)) continue;
       if (avoid >= 0 && Math.abs(st.i % W - ax) + Math.abs((st.i / W | 0) - ay) <= 4) continue;
-      const phase = st.m === Mat.Wall ? 2 : st.m === Mat.Machine ? 1 : 0;
+      const crowning = headless && (st.mc === Machine.Reactor || st.mc === Machine.CoolantTank || st.pp !== void 0 && (st.pp & Pipe.Coolant) !== 0);
+      const phase = crowning ? 0 : st.m === Mat.Wall ? 2 : st.m === Mat.Machine ? 1 : 0;
       const d = Math.abs(st.i % W - e.x) + Math.abs((st.i / W | 0) - e.y);
       let cost = d;
       if (heartPlan) {
@@ -607,6 +620,7 @@ function takePlanStep(w, e, rnd2) {
         cost += drH * HEART_PULL;
         if (st.pp !== void 0 && st.pp & Pipe.Wire || st.mc === Machine.Light) cost -= POWER_BONUS;
       }
+      if (crowning) cost -= CROWN_RUSH;
       if (cost < dists[phase]) {
         let standable = false;
         for (const nb of [st.i - 1, st.i + 1, st.i - W, st.i + W]) {
@@ -3620,7 +3634,7 @@ function stepEntities(w, rnd2) {
       dockScavs(w, rnd2, 3);
     }
   }
-  const noReactor = !w.reactorAlive || w.reactorCells.length === 0;
+  const noReactor = (!w.reactorAlive || w.reactorCells.length === 0) && !w.arrivalsOff;
   const srvCount = countKind(w, EntKind.Servitor);
   if (noReactor) {
     if (w.tick % 600 === 0 && srvCount < 4) {
