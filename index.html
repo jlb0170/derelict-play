@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DERELICT</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body {
+        background: #07080c;
+        color: #9aa3ad;
+        font-family: "SF Mono", ui-monospace, Menlo, monospace;
+        font-size: 12px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        min-height: 100vh;
+        padding: 10px;
+        gap: 8px;
+        user-select: none;
+      }
+      #topbar {
+        width: 1152px;
+        max-width: 95vw;
+        display: flex;
+        align-items: baseline;
+        gap: 16px;
+      }
+      #topbar h1 {
+        font-size: 14px;
+        letter-spacing: 6px;
+        color: #c9d2da;
+        font-weight: 600;
+      }
+      #chaos-wrap {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      #chaos-label { color: #6b7480; letter-spacing: 2px; }
+      #chaos-bar {
+        flex: 1;
+        height: 10px;
+        background: #14171d;
+        border: 1px solid #262b33;
+        position: relative;
+        overflow: hidden;
+      }
+      #chaos-fill {
+        position: absolute;
+        left: 0; top: 0; bottom: 0;
+        width: 0%;
+        background: linear-gradient(90deg, #3a6a4a, #b8862a, #c9452a);
+        transition: width 0.2s;
+      }
+      #chaos-num { min-width: 70px; text-align: right; color: #c9d2da; }
+      #chaos-mark {
+        position: absolute;
+        left: 30%; /* the calm threshold: idle below this too long and someone arrives */
+        top: -2px;
+        bottom: -2px;
+        width: 2px;
+        background: #b8862a;
+        opacity: 0.9;
+      }
+      #stage {
+        display: flex;
+        gap: 8px;
+        align-items: stretch;
+        max-width: 95vw;
+      }
+      canvas {
+        image-rendering: pixelated;
+        width: 976px;
+        max-width: calc(95vw - 176px);
+        border: 1px solid #1c2129;
+        background: #05060a;
+        cursor: crosshair;
+        align-self: flex-start;
+      }
+      #legend {
+        width: 212px;
+        flex-shrink: 0;
+        border: 1px solid #1c2129;
+        background: #0a0c11;
+        padding: 6px 8px;
+        font-size: 9.5px;
+        line-height: 1.9;
+        color: #7d8791;
+        white-space: nowrap;
+      }
+      #legend .li {
+        margin-right: 8px;
+        display: inline-block;
+      }
+      #legend h3 {
+        font-size: 9px;
+        letter-spacing: 2px;
+        color: #4d545e;
+        margin: 7px 0 2px;
+        font-weight: 600;
+      }
+      #legend h3:first-child { margin-top: 0; }
+      .sw {
+        display: inline-block;
+        width: 9px;
+        height: 9px;
+        margin-right: 7px;
+        vertical-align: -1px;
+      }
+      .swc {
+        image-rendering: pixelated;
+        width: 13px;
+        height: 13px;
+        margin-right: 5px;
+        vertical-align: -3px;
+        background: #10131a;
+      }
+      .swl {
+        display: inline-block;
+        width: 26px;
+        height: 1px;
+        margin-right: 5px;
+        vertical-align: 3px;
+      }
+      .swm {
+        display: inline-block;
+        width: 9px;
+        height: 9px;
+        margin-right: 7px;
+        vertical-align: -1px;
+        background: #10131a;
+        position: relative;
+      }
+      #status {
+        display: flex;
+        gap: 14px;
+        align-items: center;
+        color: #7d8791;
+        font-size: 12px;
+        white-space: nowrap;
+      }
+      #status b { color: #c8d0da; font-weight: 600; }
+      #act-wrap { position: relative; }
+      #act-menu .tool { white-space: nowrap; text-align: left; }
+      #act-btn {
+        background: #12151c;
+        border: 1px solid #2a3140;
+        color: #c8d0da;
+        font: inherit;
+        padding: 6px 14px;
+        cursor: pointer;
+      }
+      #act-btn.armed { border-color: #c9a227; color: #ffd964; }
+      #act-menu[hidden] { display: none; } /* hidden must beat display:flex */
+      #act-menu {
+        position: absolute;
+        bottom: 110%;
+        left: 0;
+        background: #0c0f15;
+        border: 1px solid #2a3140;
+        padding: 4px;
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        z-index: 30;
+      }
+      #news-line {
+        flex: 1;
+        margin-left: 14px;
+        color: #9aa4b0;
+        font-size: 12px;
+        letter-spacing: 0.5px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        align-self: center;
+      }
+      #news-line b { color: #d8c06a; font-weight: 600; }
+      #legend .li[data-paint] { cursor: pointer; border-radius: 2px; padding: 0 2px; }
+      #legend .li[data-paint]:hover { background: #171c26; }
+      #legend .li.painting { background: #23282f; outline: 1px solid #c9a227; }
+      #toolbar {
+        width: 1152px;
+        max-width: 95vw;
+        display: flex;
+        gap: 6px;
+        align-items: center;
+      }
+      .tool {
+        border: 1px solid #262b33;
+        background: #10131a;
+        color: #88929c;
+        padding: 4px 10px;
+        cursor: pointer;
+      }
+      .tool.active {
+        border-color: #b8862a;
+        color: #e8d9b0;
+        background: #1c1710;
+      }
+      .tool b { color: #c9d2da; margin-right: 6px; }
+      #status {
+        margin-left: auto;
+        color: #565d66;
+        display: flex;
+        gap: 14px;
+      }
+      #status span b { color: #88929c; font-weight: 600; }
+      #hint { width: 1152px; max-width: 95vw; color: #454c55; }
+      #inspect {
+        position: fixed;
+        display: none;
+        z-index: 10;
+        background: rgba(10, 12, 17, 0.92);
+        border: 1px solid #2c333d;
+        padding: 6px 9px;
+        font-size: 11px;
+        line-height: 1.5;
+        color: #9aa3ad;
+        pointer-events: none;
+        white-space: pre;
+      }
+      #inspect .hd { color: #c9d2da; font-weight: 600; }
+      #inspect .warn { color: #c98a2a; }
+      #inspect .bad { color: #c9452a; }
+      #inspect .ent { color: #9ec9a2; }
+    </style>
+    <script type="module" crossorigin src="./assets/index-BnmYHq37.js"></script>
+  </head>
+  <body>
+    <div id="topbar">
+      <h1>DERELICT</h1>
+      <div id="chaos-wrap">
+        <span id="chaos-label">CHAOS</span>
+        <div id="chaos-bar" title="below the notch for 20s and something arrives"><div id="chaos-fill"></div><div id="chaos-mark"></div></div>
+        <span id="chaos-num">0</span>
+      </div>
+    </div>
+    <div id="stage">
+      <canvas id="view" width="384" height="216"></canvas>
+      <div id="legend">
+        <h3>BEINGS</h3>
+        <div><span class="li" data-paint="brood"><canvas class="swc" id="sw-brood" width="6" height="6"></canvas>brood</span><span class="li" data-paint="egg"><canvas class="swc" id="sw-egg" width="3" height="3"></canvas>egg</span><span class="li" data-paint="roamer"><canvas class="swc" id="sw-roamer" width="3" height="3"></canvas>roamer</span></div>
+        <div><span class="li" data-paint="gun"><canvas class="swc" id="sw-gunner" width="3" height="3"></canvas>gun</span><span class="li" data-paint="lead"><canvas class="swc" id="sw-leader" width="3" height="3"></canvas>lead</span><span class="li" data-paint="torch"><canvas class="swc" id="sw-torcher" width="3" height="3"></canvas>torch</span></div>
+        <div><span class="li" data-paint="servitor"><canvas class="swc" id="sw-servitor" width="3" height="3"></canvas>servitor</span><span class="li" data-paint="militor"><canvas class="swc" id="sw-militor" width="3" height="3"></canvas>militor</span><span class="li" data-paint="reaver"><canvas class="swc" id="sw-reaver" width="3" height="3"></canvas>reaver</span></div>
+        <div><span class="li" data-paint="scav"><canvas class="swc" id="sw-scav" width="3" height="3"></canvas>scav</span><span class="li" data-paint="rustler"><canvas class="swc" id="sw-rustler" width="3" height="3"></canvas>rustler</span><span class="li" data-paint="smoker"><canvas class="swc" id="sw-protector" width="3" height="3"></canvas>smoker</span></div>
+        <div><span class="li" data-paint="weaver"><canvas class="swc" id="sw-weaver" width="3" height="3"></canvas>weaver</span><span class="li" data-paint="matriarch"><canvas class="swc" id="sw-matriarch" width="3" height="3"></canvas>matriarch</span><span class="li" data-paint="conductor"><canvas class="swc" id="sw-conductor" width="3" height="3"></canvas>conductor</span></div>
+        <div><span class="li" data-paint="mound"><canvas class="swc" id="sw-mound" width="3" height="3"></canvas>shambler</span><span class="li" data-paint="shrub"><canvas class="swc" id="sw-shrub" width="3" height="3"></canvas>shrub</span></div>
+        <h3>TERRAIN</h3>
+        <div><span class="li" data-paint="resin"><span class="sw" style="background:#4a3458"></span>resin</span><span class="li" data-paint="lattice"><span class="sw" style="background:#9284b2"></span>lattice</span></div>
+        <div><span class="li" data-paint="door"><span class="sw" style="background:#8a7440"></span>door</span><span class="li" data-paint="rubble"><span class="sw" style="background:#453c34"></span>rubble</span><span class="li" data-paint="tree"><span class="sw" style="background:#2a6e2e"></span>tree</span></div>
+        <h3>CONDUITS <span style="letter-spacing:0;color:#3e454f">dim=dead</span></h3>
+        <div><span class="li" data-paint="wire-power"><span class="swl" style="background:repeating-linear-gradient(90deg,#dcb230 0 6px,transparent 6px 10px)"></span>power</span><span class="li" data-paint="wire-fuel"><span class="swl" style="background:repeating-linear-gradient(90deg,#c4761e 0 6px,transparent 6px 10px)"></span>fuel</span></div>
+        <div><span class="li" data-paint="wire-coolant"><span class="swl" style="background:repeating-linear-gradient(90deg,#28a8c4 0 6px,transparent 6px 10px)"></span>coolant</span><span class="li" data-paint="wire-o2"><span class="swl" style="background:repeating-linear-gradient(90deg,#c8d6de 0 6px,transparent 6px 10px)"></span>O2</span></div>
+        <div><span class="li" data-paint="vine"><span class="swl" style="background:repeating-linear-gradient(90deg,#60a854 0 4px,#3c7040 4px 7px,#60a854 7px 9px,transparent 9px 12px)"></span>vine tendril</span></div>
+        <h3>FLUIDS &amp; MARKS</h3>
+        <div><span class="li" data-paint="liq-fuel"><span class="sw" style="background:#8f6216"></span>fuel</span><span class="li" data-paint="liq-coolant"><span class="sw" style="background:#28a7bd"></span>coolant</span></div>
+        <div><span class="li" data-paint="liq-ichor"><span class="sw" style="background:#4a6e2e"></span>ichor</span><span class="li" data-paint="liq-blood"><span class="sw" style="background:#761210"></span>blood</span></div>
+        <div><span class="li"><span class="sw" style="background:#4a100e"></span>old kills</span><span class="li" data-paint="fire"><span class="sw" style="background:#ff7a1a"></span>fire</span></div>
+        <div><span class="li"><span class="sw" style="background:#08101e"></span>vacuum deck</span></div>
+        <div><span class="li"><span class="swm"><span style="position:absolute;left:4px;top:4px;width:1px;height:1px;background:#f0f4f8"></span></span>walkable</span><span class="li"><span class="swm" style="border:1px dashed #ffd640;background:none"></span>work claim</span></div>
+      </div>
+      </div>
+    </div>
+    <div id="toolbar">
+      <div id="act-wrap">
+        <button id="act-btn"><b>⚡</b>ACT</button>
+        <div id="act-menu" hidden>
+          <button class="tool" data-tool="0"><b>1</b>BREACH</button>
+          <button class="tool" data-tool="1"><b>2</b>INCENDIARY</button>
+          <button class="tool" data-tool="2"><b>3</b>SABOTAGE</button>
+          <button class="tool" data-tool="3"><b>4</b>HULL CUT</button>
+          <button class="tool" data-tool="4"><b>5</b>BROOD SEED</button>
+          <button class="tool" data-tool="5"><b>6</b>WARP BEACON</button>
+        </div>
+      </div>
+      <div id="news-line">…</div>
+      <div id="status">
+        <span>XENO <b id="st-xeno">-</b></span>
+        <span>BRCH <b id="st-brch">-</b></span>
+        <span>OTHR <b id="st-other">-</b></span>
+        <span>O2 <b id="st-o2">-</b></span>
+        <span>REACTOR <b id="st-reactor">-</b></span>
+        <span>TICK <b id="st-tick">-</b></span>
+        <span>FPS <b id="st-fps">-</b></span>
+      </div>
+    </div>
+    <div id="hint">click to apply tool &middot; wheel zoom &middot; right/middle-drag or WASD pan &middot; R new derelict &middot; SPACE pause &middot; [ ] sim speed &middot; dev injection verbs stand in for player verbs (warp beacons, brood seeds) coming later</div>
+    <div id="inspect"></div>
+  </body>
+</html>
