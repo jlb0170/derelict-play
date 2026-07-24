@@ -2922,6 +2922,7 @@ function stepMilitor(w, e, rnd2) {
           if (dd < reach) reach = dd;
         }
       const big = foe.e.hp > 5;
+      let spectating = false;
       if (big && reach > 1) {
         const isRing = (ci2) => {
           const cx = ci2 % W;
@@ -2958,8 +2959,9 @@ function stepMilitor(w, e, rnd2) {
           e.ty = goal / W | 0;
           claim(goal, e);
           if (goal !== e.y * W + e.x) moveAlongPath(w, e, e.tx, e.ty, rnd2);
-        } else if (foe.d > 4) {
-          moveAlongPath(w, e, foe.e.x, foe.e.y, rnd2);
+        } else {
+          e.tx = -1;
+          spectating = true;
         }
       } else if (reach > 2) {
         moveAlongPath(w, e, foe.e.x, foe.e.y, rnd2);
@@ -2979,7 +2981,7 @@ function stepMilitor(w, e, rnd2) {
       }
       if (foe.e.hp > 0 && !big) return;
       if (foe.e.hp <= 0) e.tx = -1;
-      return;
+      if (!spectating || foe.e.hp <= 0) return;
     }
   }
   if (alarm >= 0) {
@@ -6950,9 +6952,9 @@ function updateInspector(w) {
       if (e.kind === EntKind.Scav && e.cls === 2) nm = "PROTECTOR";
       if (e.kind === EntKind.Weaver && e.cls === 1) nm = "MATRIARCH";
       if (e.kind === EntKind.Weaver && e.cls === 2) nm = "CONDUCTOR";
+      if (e.kind === EntKind.Servitor) nm += ` · ${["PIONEER", "TENDER", "WARDEN", "BUILDER"][e.cls ?? 0]}`;
       lines.push(`<span class="ent">${nm}</span> hp ${e.hp}`);
       lines.push(`  ${esc(describeTaskFn(world, e))}`);
-      if (e.kind === EntKind.Servitor) nm += ` · ${["PIONEER", "TENDER", "WARDEN", "BUILDER"][e.cls ?? 0]}`;
       if (e.kind === EntKind.Servitor || e.kind === EntKind.Militor || e.kind === EntKind.Reaver) {
         const b = e.brain;
         const tag = b ? ` ${swatchHtml(b)}#${b}` : "";
