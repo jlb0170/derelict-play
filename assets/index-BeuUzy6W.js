@@ -157,6 +157,8 @@ class World {
     // resin coverage census (refreshed periodically) — a storyteller signal
     __publicField(this, "builtCells", 0);
     // non-space census: how much ship still exists — a storyteller signal
+    __publicField(this, "darkFloorFrac", 0);
+    // fraction of deck the lights don't reach — fabrication pressure
     __publicField(this, "lightLevel", new Float32Array(W * H));
     // per-cell illumination from powered fixtures
     __publicField(this, "fireGlow", new Float32Array(W * H));
@@ -252,8 +254,6 @@ const TUNE = {
   militorPinned: 1200,
   // ticks without moving → stand down and dig
   servitorBored: 60,
-  // idle beats before walking into the dark
-  crewMax: 12,
   // staff-to-work ceiling
   debtHeadroom: 4,
   // death-debt may exceed crew target by this
@@ -405,7 +405,17 @@ function attemptSuccession(w) {
         }
       }
     }
-    if (cluster.length >= 3) candidates.push(cluster);
+    let underConstruction = false;
+    for (const plan of w.buildPlans) {
+      for (const st of plan.steps) {
+        if (!stepDone(w, st) && cluster.includes(st.i)) {
+          underConstruction = true;
+          break;
+        }
+      }
+      if (underConstruction) break;
+    }
+    if (!underConstruction && cluster.length >= 3) candidates.push(cluster);
   }
   if (candidates.length === 0) return;
   candidates.sort((a, b) => b.length - a.length);
@@ -527,6 +537,46 @@ function stampHeart(w) {
     bp.mat[c] = Mat.Machine;
     bp.machine[c] = Machine.Reactor;
   }
+  {
+    const rc0 = w.reactorCells[0];
+    const rx0 = rc0 % W;
+    const ry0 = rc0 / W | 0;
+    let hasTank = false;
+    let hasLamp = false;
+    for (let i = 0; i < bp.machine.length; i++) {
+      if (bp.machine[i] === Machine.CoolantTank && Math.abs(i % W - rx0) + Math.abs((i / W | 0) - ry0) <= 30) hasTank = true;
+      if (bp.machine[i] === Machine.Light && Math.abs(i % W - rx0) + Math.abs((i / W | 0) - ry0) <= 8) hasLamp = true;
+    }
+    if (!hasTank || !hasLamp) {
+      const ring = [];
+      for (let r = 1; r <= 3 && ring.length < 6; r++) {
+        for (let dy = -r; dy <= r; dy++)
+          for (let dx = -r; dx <= r; dx++) {
+            if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+            const cx2 = rx0 + dx;
+            const cy2 = ry0 + dy;
+            if (cx2 < 1 || cx2 >= W - 1 || cy2 < 1 || cy2 >= H - 1) continue;
+            const i2 = cy2 * W + cx2;
+            if (bp.machine[i2] !== 0 || bp.mat[i2] === Mat.Hull || w.reactorCells.includes(i2)) continue;
+            ring.push(i2);
+          }
+      }
+      if (!hasTank && ring.length >= 2) {
+        const t2 = ring.shift();
+        const s2 = ring.shift();
+        bp.mat[t2] = Mat.Machine;
+        bp.machine[t2] = Machine.CoolantTank;
+        bp.mat[s2] = Mat.Floor;
+        bp.pipe[s2] |= Pipe.Coolant;
+      }
+      if (!hasLamp && ring.length >= 1) {
+        const l2 = ring.shift();
+        bp.mat[l2] = Mat.Floor;
+        bp.machine[l2] = Machine.Light;
+        bp.pipe[l2] |= Pipe.Wire;
+      }
+    }
+  }
   for (const bit of [Pipe.Wire, Pipe.Coolant, Pipe.Fuel]) {
     let touches = false;
     for (const c of w.reactorCells) {
@@ -598,8 +648,10 @@ function takePlanStep(w, e, rnd2) {
   }
   const rhx = rcH >= 0 ? rcH % W : 0;
   const rhy = rcH >= 0 ? rcH / W | 0 : 0;
-  const HEART_PULL = 2.5;
-  const POWER_BONUS = 40;
+  const cohort = e.kind === EntKind.Servitor ? e.cls ?? 0 : 0;
+  const RING_PULL = cohort === 0 ? 6 : cohort === 1 ? 2 : 1;
+  const COOL_BONUS = cohort === 1 ? 400 : 60;
+  const POWER_BONUS = cohort === 1 ? 300 : 40;
   const CROWN_RUSH = 150;
   const bests = [null, null, null];
   const dists = [Infinity, Infinity, Infinity];
@@ -617,8 +669,11 @@ function takePlanStep(w, e, rnd2) {
       let cost = d;
       if (heartPlan) {
         const drH = Math.abs(st.i % W - rhx) + Math.abs((st.i / W | 0) - rhy);
-        cost += drH * HEART_PULL;
-        if (st.pp !== void 0 && st.pp & Pipe.Wire || st.mc === Machine.Light) cost -= POWER_BONUS;
+        cost += drH * RING_PULL;
+        if (st.mc === Machine.CoolantTank || st.pp !== void 0 && (st.pp & Pipe.Coolant) !== 0)
+          cost -= COOL_BONUS;
+        else if (st.pp !== void 0 && (st.pp & Pipe.Wire) !== 0 || st.mc === Machine.Light)
+          cost -= POWER_BONUS;
       }
       if (crowning) cost -= CROWN_RUSH;
       if (cost < dists[phase]) {
@@ -2438,7 +2493,7 @@ function headHome(w, e, rnd2) {
   }
   moveAlongPath(w, e, hx, hy, rnd2);
 }
-function spawnServitor(w, x, y) {
+function spawnServitor(w, x, y, cohort) {
   w.ents.push({
     kind: EntKind.Servitor,
     x,
@@ -2447,6 +2502,7 @@ function spawnServitor(w, x, y) {
     cd: 0,
     timer: 0,
     flash: -99,
+    cls: cohort ?? w.ents.length % 3,
     tx: -1,
     ty: -1,
     path: null,
@@ -2686,7 +2742,7 @@ function stepServitor(w, e, rnd2) {
     }
     if (rcAlive) {
       const dHome = Math.abs(e.x - rcx3) + Math.abs(e.y - rcy3);
-      if (dHome > 18) {
+      if (dHome > 10) {
         for (let a = 0; a < 20; a++) {
           const hx = rcx3 + (rnd2() * 17 | 0) - 8;
           const hy = rcy3 + (rnd2() * 17 | 0) - 8;
@@ -3664,9 +3720,9 @@ function stepEntities(w, rnd2) {
         if (!stepDone(w, st)) pendingWork++;
       }
     }
-    const crewTarget = pendingWork === 0 ? 0 : Math.min(TUNE.crewMax, 2 + pendingWork / 30 | 0);
+    const crewTarget = pendingWork === 0 ? 0 : Math.min(14, 2 + (pendingWork / 30 | 0) + Math.round((w.darkFloorFrac ?? 0) * 8));
     const crewNow = countKind(w, EntKind.Servitor) + countKind(w, EntKind.Militor);
-    const baseline = w.tick % 600 === 0 && crewNow < crewTarget;
+    const baseline = w.tick % (crewNow < crewTarget * 0.7 ? 180 : 600) === 0 && crewNow < crewTarget;
     if (debtDue && crewNow < crewTarget + TUNE.debtHeadroom || baseline) {
       const p = w.periReactor.find((i) => entPass(w.mat[i]) && !occ[i]);
       if (p !== void 0) {
@@ -3702,13 +3758,20 @@ function stepEntities(w, rnd2) {
     w.hullCells.length = 0;
     let gc = 0;
     let bc = 0;
+    let fl = 0;
+    let dk = 0;
     for (let i = 0; i < N; i++) {
       if (w.mat[i] !== Mat.Space) bc++;
       if (w.mat[i] === Mat.Hull) w.hullCells.push(i);
       else if (w.mat[i] === Mat.Growth) gc++;
+      else if (w.mat[i] === Mat.Floor) {
+        fl++;
+        if (w.lightLevel[i] < 0.25) dk++;
+      }
     }
     w.growthCells = gc;
     w.builtCells = bc;
+    w.darkFloorFrac = fl > 0 ? dk / fl : 1;
   }
   if (w.tick % 300 === 0) {
     if (w.buildPlans.length > 1) {
@@ -3726,7 +3789,9 @@ function stepEntities(w, rnd2) {
     if (w.buildPlans.length) {
       const heartBeats = w.reactorAlive && w.reactorCells.length > 0;
       w.buildPlans = w.buildPlans.filter(
-        (plan) => !plan.restore && plan.steps.some((st) => !stepDone(w, st)) && w.tick - plan.touched < 4e3 && !(heartBeats && plan.steps.some(
+        (plan) => !plan.restore && plan.steps.some((st) => !stepDone(w, st)) && w.tick - plan.touched < 4e3 && !(heartBeats && // a plan that CONTAINS the beating heart is that heart's own
+        // completion — canceling it kills the coolant tank mid-build
+        !plan.steps.some((st) => w.reactorCells.includes(st.i)) && plan.steps.some(
           (st) => st.mc === Machine.Reactor && !stepDone(w, st) && !w.reactorCells.includes(st.i)
         ) && // a rival the crew can reach is insubordination; one across
         // an impassable void is a marooned colony — a lifeboat, and
@@ -6885,6 +6950,7 @@ function updateInspector(w) {
       if (e.kind === EntKind.Weaver && e.cls === 2) nm = "CONDUCTOR";
       lines.push(`<span class="ent">${nm}</span> hp ${e.hp}`);
       lines.push(`  ${esc(describeTaskFn(world, e))}`);
+      if (e.kind === EntKind.Servitor) nm += ` · ${["BUILDER", "TENDER", "WARDEN"][e.cls ?? 0]}`;
       if (e.kind === EntKind.Servitor || e.kind === EntKind.Militor || e.kind === EntKind.Reaver) {
         const b = e.brain;
         const tag = b ? ` ${swatchHtml(b)}#${b}` : "";
