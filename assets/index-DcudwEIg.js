@@ -649,9 +649,9 @@ function takePlanStep(w, e, rnd2) {
   const rhx = rcH >= 0 ? rcH % W : 0;
   const rhy = rcH >= 0 ? rcH / W | 0 : 0;
   const cohort = e.kind === EntKind.Servitor ? e.cls ?? 0 : 0;
-  const RING_PULL = cohort === 0 ? 6 : cohort === 1 ? 2 : 1;
-  const COOL_BONUS = cohort === 1 ? 400 : 60;
-  const POWER_BONUS = cohort === 1 ? 300 : 40;
+  const RING_PULL = cohort === 0 ? 6 : cohort === 1 ? 2 : cohort === 2 ? 1 : 0;
+  const COOL_BONUS = cohort === 1 ? 400 : cohort === 3 ? 0 : 60;
+  const POWER_BONUS = cohort === 1 ? 300 : cohort === 3 ? 0 : 40;
   const CROWN_RUSH = 150;
   const bests = [null, null, null];
   const dists = [Infinity, Infinity, Infinity];
@@ -2502,7 +2502,7 @@ function spawnServitor(w, x, y, cohort) {
     cd: 0,
     timer: 0,
     flash: -99,
-    cls: cohort ?? w.ents.length % 3,
+    cls: cohort ?? w.ents.length % 4,
     tx: -1,
     ty: -1,
     path: null,
@@ -3720,9 +3720,11 @@ function stepEntities(w, rnd2) {
         if (!stepDone(w, st)) pendingWork++;
       }
     }
-    const crewTarget = pendingWork === 0 ? 0 : Math.min(14, 2 + (pendingWork / 30 | 0) + Math.round((w.darkFloorFrac ?? 0) * 8));
+    const fireCrew = Math.min(6, w.burningCells / 3 | 0);
+    const crewTarget = pendingWork === 0 && fireCrew === 0 ? 0 : Math.min(16, 2 + (pendingWork / 30 | 0) + Math.round((w.darkFloorFrac ?? 0) * 8) + fireCrew);
     const crewNow = countKind(w, EntKind.Servitor) + countKind(w, EntKind.Militor);
-    const baseline = w.tick % (crewNow < crewTarget * 0.7 ? 180 : 600) === 0 && crewNow < crewTarget;
+    const cadence = fireCrew > 0 && crewNow < crewTarget ? 60 : crewNow < crewTarget * 0.7 ? 180 : 600;
+    const baseline = w.tick % cadence === 0 && crewNow < crewTarget;
     if (debtDue && crewNow < crewTarget + TUNE.debtHeadroom || baseline) {
       const p = w.periReactor.find((i) => entPass(w.mat[i]) && !occ[i]);
       if (p !== void 0) {
@@ -6950,7 +6952,7 @@ function updateInspector(w) {
       if (e.kind === EntKind.Weaver && e.cls === 2) nm = "CONDUCTOR";
       lines.push(`<span class="ent">${nm}</span> hp ${e.hp}`);
       lines.push(`  ${esc(describeTaskFn(world, e))}`);
-      if (e.kind === EntKind.Servitor) nm += ` · ${["BUILDER", "TENDER", "WARDEN"][e.cls ?? 0]}`;
+      if (e.kind === EntKind.Servitor) nm += ` · ${["PIONEER", "TENDER", "WARDEN", "BUILDER"][e.cls ?? 0]}`;
       if (e.kind === EntKind.Servitor || e.kind === EntKind.Militor || e.kind === EntKind.Reaver) {
         const b = e.brain;
         const tag = b ? ` ${swatchHtml(b)}#${b}` : "";
