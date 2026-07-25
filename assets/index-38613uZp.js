@@ -188,6 +188,8 @@ class World {
     __publicField(this, "shots", []);
     __publicField(this, "fuelReserve", 6e3);
     __publicField(this, "coolantReserve", 3e3);
+    __publicField(this, "coolantTankCells", 0);
+    // standing condenser cells — the coolant INCOME side
     __publicField(this, "o2Reserve", 2e4);
     __publicField(this, "reactorAlive", true);
     __publicField(this, "coolingActive", true);
@@ -4950,6 +4952,9 @@ function rebuildNetworks(w) {
     for (let k = 0; k < qt; k++) lightDepth[lightQ[k]] = 0;
   }
   flood(w, Pipe.Coolant, liveSeeds(w, Pipe.Coolant, Machine.CoolantTank), coolReach);
+  let tanks = 0;
+  for (let i = 0; i < N; i++) if (w.mat[i] === Mat.Machine && w.machine[i] === Machine.CoolantTank) tanks++;
+  w.coolantTankCells = tanks;
   w.coolingActive = w.coolantReserve > 0 && reactorTouches(w, coolReach);
   flood(w, Pipe.Fuel, liveSeeds(w, Pipe.Fuel, Machine.FuelTank), fuelReach);
   const o2Powered = liveTouch(w, Machine.O2Gen, powered);
@@ -5126,6 +5131,7 @@ function stepMachines(w) {
     }
   }
   if (w.reactorAlive && !w.melted && w.reactorCells.length) {
+    w.coolantReserve = Math.min(3600, w.coolantReserve + Math.min(0.5, w.coolantTankCells * 0.05));
     if (w.coolingActive) {
       w.coreHeat = Math.max(0, w.coreHeat * 0.995 - 0.5);
     } else {
@@ -6906,6 +6912,11 @@ function updateInspector(w) {
     }
   }
   lines.push(`<span class="hd">${esc(head)}${headHtml}</span>  <span style="color:#565d66">${mouseX},${mouseY}</span>`);
+  if (m === Mat.Machine && (w.machine[i] === Machine.Reactor || w.machine[i] === Machine.CoolantTank) && w.reactorAlive) {
+    const brew = Math.min(0.5, w.coolantTankCells * 0.05);
+    const res = `coolant reserve ${w.coolantReserve | 0} · brewing +${brew.toFixed(2)}/t`;
+    lines.push(w.coolingActive ? res : `<span class="bad">flow LOST — core climbing ${w.coreHeat | 0}/3000</span> · ${esc(res)}`);
+  }
   const rid = w.roomId[i];
   if (rid >= 0 && m !== Mat.Space) {
     const room = w.rooms[rid];
