@@ -5766,7 +5766,8 @@ const SPR = {
   [EntKind.Militor]: [1, 1, 1, 1, 3, 1, 1, 2, 1],
   [EntKind.Mound]: [2, 1, 2, 1, 3, 1, 1, 1, 1],
   [EntKind.Shrub]: [0, 1, 0, 1, 3, 1, 0, 2, 0],
-  [EntKind.Reaver]: [3, 0, 3, 2, 1, 2, 3, 0, 3]
+  [EntKind.Reaver]: [1, 1, 1, 1, 3, 1, 1, 2, 1]
+  // full red bulk, white eye, black maw
 };
 const HAT = [
   [86, 148, 255],
@@ -5787,8 +5788,8 @@ const PAL = {
   // walking grove
   [EntKind.Shrub]: [[64, 122, 52], [38, 76, 36], [150, 210, 100]],
   // pot-sized wanderer
-  [EntKind.Reaver]: [[150, 34, 48], [86, 16, 26], [238, 226, 210]]
-  // bone claws, arterial dark
+  [EntKind.Reaver]: [[150, 34, 48], [14, 16, 20], [238, 226, 210]]
+  // arterial red, black maw, bone-white eye
 };
 const BADGE = [
   [92, 168, 255],
