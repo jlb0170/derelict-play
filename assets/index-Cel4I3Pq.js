@@ -7240,7 +7240,9 @@ function loop() {
     const CLAIM_SQUAD = `rgba(255, 200, 64, ${claimA})`;
     ctx.lineWidth = 1;
     ctx.setLineDash([3, 3]);
-    ctx.lineDashOffset = -(frame * 0.6 % 12);
+    const claimPhase = -(frame * 0.6 % 12);
+    ctx.lineDashOffset = claimPhase;
+    const claimDrawn = /* @__PURE__ */ new Map();
     for (const e of world.ents) {
       const machineHand = e.kind === EntKind.Servitor || e.kind === EntKind.Militor;
       const squadHand = e.kind === EntKind.Breacher && e.cls === 1 && e.patrol !== true;
@@ -7250,6 +7252,11 @@ function loop() {
       const dx = (e.tx - viewX) * cellW;
       const dy = (e.ty - viewY) * cellH;
       if (dx < -cellW || dy < -cellH || dx > canvas.width || dy > canvas.height) continue;
+      const ci = e.ty * W + e.tx;
+      const first = claimDrawn.get(ci);
+      if (first === machineHand) continue;
+      if (first === void 0) claimDrawn.set(ci, machineHand);
+      ctx.lineDashOffset = first === void 0 ? claimPhase : claimPhase + 3;
       ctx.strokeStyle = machineHand ? CLAIM_MACHINE : CLAIM_SQUAD;
       ctx.strokeRect(Math.round(dx) + 0.5, Math.round(dy) + 0.5, Math.round(cellW) - 1, Math.round(cellH) - 1);
     }
