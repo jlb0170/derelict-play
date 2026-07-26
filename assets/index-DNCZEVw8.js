@@ -165,13 +165,24 @@ class World {
     // per-tick firelight — flickering, alive
     __publicField(this, "bridgeGlow", new Float32Array(W * H));
     // lightbridge pulse — slow, steady, violet
+    __publicField(this, "condGlow", new Float32Array(W * H));
+    // conductors carry their own white lamp, radius 2
     __publicField(this, "wirePowered", new Uint8Array(W * H));
     // snapshot of the live power flood
+    __publicField(this, "reactorOwner", new Uint16Array(W * H));
+    // brain that raised each reactor cell — no plant is unclaimed
+    __publicField(this, "brainHearts", /* @__PURE__ */ new Map());
+    // per-brain: one standing heart cell (rebuilt per pulse)
     __publicField(this, "hullCells", []);
     __publicField(this, "lastAlienTick", 0);
     // when the ship last had a living alien
     __publicField(this, "buildPlans", []);
     // concurrent blueprints, team = owning brain
+    // cells stampHeart grafted into the blueprint for the CURRENT heart
+    // (livability kit, plumbing runs) with their prior values — the next
+    // succession reverts them first, or the dream becomes a palimpsest of
+    // dead hearts' tanks and the crew builds machine graveyards
+    __publicField(this, "blueprintGrafts", []);
     // the original reactor brain's memory of what this ship IS — the crew
     // repairs toward this after fires and battles. Dies with the cataclysm.
     __publicField(this, "blueprint", null);
@@ -351,6 +362,12 @@ const CADENCE = [24, 30, 5, 9, 8, 8, 14, 8, 26, 44, 4];
 const claimCell = /* @__PURE__ */ new Map();
 function rebuildClaims(w) {
   claimCell.clear();
+  w.brainHearts.clear();
+  for (let i = 0; i < N; i++) {
+    if (w.mat[i] !== Mat.Machine || w.machine[i] !== Machine.Reactor) continue;
+    const own = w.reactorCells.includes(i) ? w.brainId : w.reactorOwner[i];
+    if (own > 0 && !w.brainHearts.has(own)) w.brainHearts.set(own, i);
+  }
   for (const o of w.ents) {
     if (o.hp <= 0 || o.tx === void 0 || o.tx < 0) continue;
     if (o.kind !== EntKind.Servitor && o.kind !== EntKind.Militor && o.kind !== EntKind.Scav && o.kind !== EntKind.Breacher) continue;
@@ -444,6 +461,12 @@ function attemptSuccession(w) {
   w.reactorAlive = true;
   if (w.nextBrainId <= w.brainId) w.nextBrainId = w.brainId + 1;
   w.brainId = w.nextBrainId++;
+  for (const c of chosen) w.reactorOwner[c] = w.brainId;
+  for (let i9 = 0; i9 < N; i9++) {
+    if (w.mat[i9] !== Mat.Machine || w.machine[i9] !== Machine.CoolantTank) continue;
+    const dd9 = Math.abs(i9 % W - chosen[0] % W) + Math.abs((i9 / W | 0) - (chosen[0] / W | 0));
+    if (dd9 <= 12) w.reactorOwner[i9] = w.brainId;
+  }
   w.pushNews(`SUCCESSION — ${brainName(w.brainId)} inherits the ship`);
   swearCrew(w);
   w.melted = false;
@@ -529,6 +552,40 @@ function draftGridTap(w, coreCells) {
 function stampHeart(w) {
   const bp = w.blueprint;
   if (!bp) return;
+  for (let k = w.blueprintGrafts.length - 1; k >= 0; k--) {
+    const g2 = w.blueprintGrafts[k];
+    bp.mat[g2.i] = g2.mat;
+    bp.machine[g2.i] = g2.machine;
+    bp.pipe[g2.i] = g2.pipe;
+  }
+  w.blueprintGrafts = [];
+  const graft = (i2) => {
+    w.blueprintGrafts.push({ i: i2, mat: bp.mat[i2], machine: bp.machine[i2], pipe: bp.pipe[i2] });
+  };
+  const paveApproach = (i2, hx, hy) => {
+    let ok = false;
+    let best = -1;
+    let bestD = Infinity;
+    for (const j of [i2 - 1, i2 + 1, i2 - W, i2 + W]) {
+      if (j < 0 || j >= N) continue;
+      const bm = bp.mat[j];
+      if (bm === Mat.Floor || bm === Mat.DoorOpen || bm === Mat.Rubble) {
+        ok = true;
+        break;
+      }
+      if (bm === Mat.Space) {
+        const dd = Math.abs(j % W - hx) + Math.abs((j / W | 0) - hy);
+        if (dd < bestD) {
+          bestD = dd;
+          best = j;
+        }
+      }
+    }
+    if (!ok && best >= 0) {
+      graft(best);
+      bp.mat[best] = Mat.Floor;
+    }
+  };
   for (let i = 0; i < bp.mat.length; i++) {
     if (bp.machine[i] === Machine.Reactor && !w.reactorCells.includes(i)) {
       bp.machine[i] = Machine.None;
@@ -563,19 +620,25 @@ function stampHeart(w) {
             ring.push(i2);
           }
       }
+      ring.sort((a, b) => (bp.mat[a] === Mat.Space ? 1 : 0) - (bp.mat[b] === Mat.Space ? 1 : 0));
       if (!hasTank && ring.length >= 2) {
         const t2 = ring.shift();
         const s2 = ring.shift();
+        graft(t2);
+        graft(s2);
         bp.mat[t2] = Mat.Machine;
         bp.machine[t2] = Machine.CoolantTank;
         bp.mat[s2] = Mat.Floor;
         bp.pipe[s2] |= Pipe.Coolant;
+        paveApproach(t2, rx0, ry0);
       }
       if (!hasLamp && ring.length >= 1) {
         const l2 = ring.shift();
+        graft(l2);
         bp.mat[l2] = Mat.Floor;
         bp.machine[l2] = Machine.Light;
         bp.pipe[l2] |= Pipe.Wire;
+        paveApproach(l2, rx0, ry0);
       }
     }
   }
@@ -612,6 +675,7 @@ function stampHeart(w) {
       const i = py * W + px2;
       const m = bp.mat[i];
       if (m !== Mat.Hull && bp.machine[i] === 0) {
+        graft(i);
         bp.pipe[i] |= bit;
         if (m === Mat.Space) bp.mat[i] = Mat.Floor;
       }
@@ -639,8 +703,11 @@ function takePlanStep(w, e, rnd2) {
   const ax = avoid >= 0 ? avoid % W : 0;
   const ay = avoid >= 0 ? avoid / W | 0 : 0;
   let rcH = w.reactorAlive && w.reactorCells.length ? w.reactorCells[0] : -1;
+  if (e.brain !== void 0 && e.brain !== w.brainId) {
+    rcH = w.brainHearts.get(e.brain) ?? -1;
+  }
   const headless = rcH < 0;
-  if (headless && w.blueprint) {
+  if (headless && w.blueprint && (e.brain === void 0 || e.brain === w.brainId)) {
     for (let bi = 0; bi < w.blueprint.machine.length; bi++) {
       if (w.blueprint.machine[bi] === Machine.Reactor) {
         rcH = bi;
@@ -773,7 +840,8 @@ function refreshRestorePlan(w) {
     const machOk = bp.machine[i] === 0 || w.machine[i] === bp.machine[i];
     const pipeOk = (w.pipe[i] & bp.pipe[i]) === bp.pipe[i];
     if (matOk && machOk && pipeOk) continue;
-    if (cm === Mat.Space || cm === Mat.Rubble || cm === Mat.Lattice || cm === Mat.Vine || cm === Mat.Tree || cm === Mat.Floor || cm === Mat.DoorOpen || cm === Mat.DoorClosed || matOk) {
+    const rivalPlant = cm === Mat.Machine && (w.machine[i] === Machine.Reactor || w.machine[i] === Machine.CoolantTank) && !w.reactorCells.includes(i);
+    if (cm === Mat.Space || cm === Mat.Rubble || cm === Mat.Lattice || cm === Mat.Vine || cm === Mat.Tree || cm === Mat.Floor || cm === Mat.DoorOpen || cm === Mat.DoorClosed || matOk || rivalPlant) {
       found.push({
         st: {
           i,
@@ -830,6 +898,8 @@ function afterBuild(w, plan, st) {
       if (o.hp <= 0) continue;
       if (Math.abs(o.x - cx) + Math.abs(o.y - cy) <= 10) o.brain = colonyId;
     }
+    for (const p2 of rSteps) w.reactorOwner[p2.i] = colonyId;
+    for (const p2 of plan.steps) if (p2.mc === Machine.CoolantTank) w.reactorOwner[p2.i] = colonyId;
     plan.team = colonyId;
     const tap2 = draftGridTap(w, rSteps.map((s2) => s2.i));
     if (tap2.length) w.buildPlans.push({ steps: tap2, touched: w.tick, team: colonyId });
@@ -841,10 +911,12 @@ function afterBuild(w, plan, st) {
   w.coreHeat = 0;
   if (w.nextBrainId <= w.brainId) w.nextBrainId = w.brainId + 1;
   w.brainId = w.nextBrainId++;
+  for (const c2 of w.reactorCells) w.reactorOwner[c2] = w.brainId;
   w.pushNews(`a heart beats — ${brainName(w.brainId)} takes the crown`);
   swearCrew(w);
   w.periReactor = perimOf(w, w.reactorCells);
   const tSteps = plan.steps.filter((p2) => p2.mc === Machine.CoolantTank);
+  for (const p2 of tSteps) w.reactorOwner[p2.i] = w.brainId;
   if (tSteps.length) w.periCoolTank = perimOf(w, tSteps.map((p2) => p2.i));
   if (w.coolantReserve < 1200) w.coolantReserve = 1200;
   w.networksDirty = true;
@@ -927,8 +999,10 @@ function draftPlan(w, rnd2, e, sovereign = false) {
       let nearShip = false;
       for (let y = by - 1; y <= by + 4 && ok; y++)
         for (let x = bx - 1; x <= bx + 4 && ok; x++) {
-          const m = w.mat[y * W + x];
-          if (m === Mat.Machine || m === Mat.Hull || m === Mat.Wall || m === Mat.DoorClosed || m === Mat.DoorOpen) ok = false;
+          const i9 = y * W + x;
+          const m = w.mat[i9];
+          const rivalPlant = m === Mat.Machine && (w.machine[i9] === Machine.Reactor || w.machine[i9] === Machine.CoolantTank) && w.reactorOwner[i9] !== (e.brain ?? 0);
+          if (m === Mat.Machine && !rivalPlant || m === Mat.Hull || m === Mat.Wall || m === Mat.DoorClosed || m === Mat.DoorOpen) ok = false;
           if (m === Mat.Floor || m === Mat.Rubble) nearShip = true;
         }
       if (!ok || !nearShip) continue;
@@ -1954,23 +2028,35 @@ function stepBreacher(w, e, rnd2) {
     }
   }
   const cls = e.cls;
+  const posB = e.y * W + e.x;
+  if (e.satPos !== posB) {
+    e.satPos = posB;
+    e.sat = w.tick;
+  }
   let target = nearestEnt(w, e, (o) => isMarineTarget(o) && o.kind !== EntKind.Brood, 7);
   if (!target) target = nearestEnt(w, e, isMarineTarget, 16);
   const range2 = cls === 1 ? 2 : 7;
   if (target && target.d <= range2 && (target.d <= 1 || hasLOS(w, e.x, e.y, target.e.x, target.e.y))) {
     e.path = null;
     if (w.tick >= e.timer) {
-      e.timer = w.tick + (cls === 1 ? 20 : cls === 2 ? 17 : 14);
+      const braced = cls === 0 && w.tick - (e.sat ?? w.tick) > 30;
+      e.timer = w.tick + (cls === 1 ? 20 : cls === 2 ? 17 : braced ? 7 : 14);
       e.flash = w.tick;
       if (cls === 1) {
         fireGout(w, e.x, e.y, target.e.x, target.e.y, rnd2, isMarineTarget, 3);
       } else {
-        w.shots.push({ x0: e.x, y0: e.y, x1: target.e.x, y1: target.e.y, t: w.tick, k: 0 });
+        const roll = rnd2();
+        const rounds = roll < 0.08 ? 1 : roll < 0.3 ? 2 : roll < 0.7 ? 3 : roll < 0.92 ? 4 : 5;
+        for (let b = 0; b < rounds; b++) {
+          const jx = b === 0 ? 0 : (rnd2() * 3 | 0) - 1;
+          const jy = b === 0 ? 0 : (rnd2() * 3 | 0) - 1;
+          w.shots.push({ x0: e.x, y0: e.y, x1: target.e.x + jx, y1: target.e.y + jy, t: w.tick + b * 3, k: 0 });
+        }
         let acc = cls === 2 ? 0.5 : 0.55;
         if (target.d <= 3) acc = 0.68;
         else if (target.e.kind === EntKind.Roamer && isDark(w, target.e.y * W + target.e.x)) acc *= 0.8;
         if (rnd2() < acc) {
-          target.e.hp -= 2;
+          target.e.hp -= braced ? 4 : 2;
           target.e.flash = w.tick;
           if (target.e.kind === EntKind.Brood) alarmHive(w, target.e.x, target.e.y);
         } else if (cls === 0) {
@@ -2044,6 +2130,7 @@ function formationGoal(w, e, leader) {
 }
 function stepTrooper(w, e, target, rnd2) {
   if (target) {
+    if (e.cls === 0 && target.e.kind === EntKind.Roamer && target.d <= 12 && hasLOS(w, e.x, e.y, target.e.x, target.e.y)) return;
     if (e.cls === 1) {
       const leader2 = nearestLeader(w, e);
       if (leader2 && Math.abs(leader2.x - e.x) + Math.abs(leader2.y - e.y) > 2) {
@@ -2124,6 +2211,9 @@ function stepTrooper(w, e, target, rnd2) {
   if (e.cls === 0) {
     const far = nearestEnt(w, e, (o) => isMarineTarget(o) && o.kind !== EntKind.Brood, 28);
     if (far && far.d > 7) {
+      if (far.e.kind === EntKind.Roamer && far.d <= 12 && hasLOS(w, e.x, e.y, far.e.x, far.e.y)) {
+        return;
+      }
       moveAlongPath(w, e, far.e.x, far.e.y, rnd2);
       return;
     }
@@ -2778,8 +2868,9 @@ function stepServitor(w, e, rnd2) {
         return;
       }
     }
-    const rcAlive = w.reactorAlive && w.reactorCells.length > 0;
-    const rcCell = rcAlive ? w.reactorCells[0] : -1;
+    let rcCell = w.reactorAlive && w.reactorCells.length > 0 ? w.reactorCells[0] : -1;
+    if (e.brain !== void 0 && e.brain !== w.brainId) rcCell = w.brainHearts.get(e.brain) ?? -1;
+    const rcAlive = rcCell >= 0;
     const rcx3 = rcAlive ? rcCell % W : 0;
     const rcy3 = rcAlive ? rcCell / W | 0 : 0;
     let fBest = -1;
@@ -2951,12 +3042,32 @@ function stepServitor(w, e, rnd2) {
           e.flash = w.tick;
           return;
         }
+        const pm0 = w.mat[st.i];
+        if (pm0 === Mat.Machine && w.machine[st.i] !== (st.mc ?? 0)) {
+          const mc0 = w.machine[st.i];
+          const plant0 = mc0 === Machine.Reactor || mc0 === Machine.CoolantTank;
+          if (plant0 && w.reactorOwner[st.i] === (e.brain ?? 0)) {
+            e.tx = -1;
+            return;
+          }
+          const k0 = w.reactorCells.indexOf(st.i);
+          if (k0 >= 0) {
+            w.reactorCells.splice(k0, 1);
+            if (w.reactorCells.length === 0) w.reactorAlive = false;
+            w.pushNews(`WAR — ${brainName(e.brain ?? 0)} paves over the crown of ${brainName(w.brainId)}`);
+          } else if (plant0) {
+            w.pushNews(`WAR — ${brainName(e.brain ?? 0)}'s dream paves over a rival plant`);
+          }
+          w.machine[st.i] = 0;
+          w.destruction += mc0 === Machine.Reactor ? 6 : plant0 ? 3 : 1;
+        }
         w.mat[st.i] = st.m;
         if (st.m === Mat.Wall || st.m === Mat.Machine) {
           w.air[st.i] = 0;
           w.solidFuel[st.i] = 0;
         }
         if (st.mc !== void 0) w.machine[st.i] = st.mc;
+        if (st.mc === Machine.Reactor || st.mc === Machine.CoolantTank) w.reactorOwner[st.i] = hit.plan.team ?? e.brain ?? 0;
         if (st.pp !== void 0) {
           w.pipe[st.i] |= st.pp;
           w.pipeBroken[st.i] = 0;
@@ -2988,6 +3099,58 @@ function stepServitor(w, e, rnd2) {
     }
     e.tx = -1;
     return;
+  }
+}
+function wakeDormantHearts(w, rnd2) {
+  if (w.arrivalsOff || !w.reactorAlive) return;
+  let crew = 0;
+  for (const o of w.ents)
+    if (o.hp > 0 && (o.kind === EntKind.Servitor || o.kind === EntKind.Militor)) crew++;
+  if (crew > 30) return;
+  const seen = new Uint8Array(N);
+  for (let i0 = 0; i0 < N; i0++) {
+    if (seen[i0] || w.mat[i0] !== Mat.Machine || w.machine[i0] !== Machine.Reactor) continue;
+    const cluster = [i0];
+    seen[i0] = 1;
+    for (let qi = 0; qi < cluster.length; qi++) {
+      for (const j of [cluster[qi] - 1, cluster[qi] + 1, cluster[qi] - W, cluster[qi] + W]) {
+        if (j >= 0 && j < N && !seen[j] && w.mat[j] === Mat.Machine && w.machine[j] === Machine.Reactor) {
+          seen[j] = 1;
+          cluster.push(j);
+        }
+      }
+    }
+    if (cluster.length < 3) continue;
+    if (cluster.some((c) => w.reactorCells.includes(c))) continue;
+    let owner = 0;
+    for (const c of cluster) {
+      if (w.reactorOwner[c] > 0 && w.reactorOwner[c] !== w.brainId) {
+        owner = w.reactorOwner[c];
+        break;
+      }
+    }
+    if (owner === 0) owner = w.nextBrainId++;
+    for (const c of cluster) w.reactorOwner[c] = owner;
+    let sworn = false;
+    for (const o of w.ents) {
+      if (o.hp > 0 && o.brain === owner && (o.kind === EntKind.Servitor || o.kind === EntKind.Militor)) {
+        sworn = true;
+        break;
+      }
+    }
+    if (sworn) continue;
+    let placed = 0;
+    placeAround(w, i0 % W, i0 / W | 0, 2, (x, y) => {
+      if (placed < 2) {
+        spawnServitor(w, x, y);
+        w.ents[w.ents.length - 1].brain = owner;
+        placed++;
+      }
+    });
+    if (placed > 0) {
+      w.pushNews(`a dormant heart stirs — ${brainName(owner)} wakes its hands`);
+      return;
+    }
   }
 }
 function stepMilitor(w, e, rnd2) {
@@ -3843,6 +4006,7 @@ function stepEntities(w, rnd2) {
   }
   moundPulse(w, rnd2);
   reaverPulse(w, rnd2);
+  if (w.tick % 1500 === 750) wakeDormantHearts(w);
   if (!w.reactorAlive || w.reactorCells.length === 0) {
     headlessTicks++;
     if (headlessTicks > 4e3 && headlessTicks % 2e3 === 0) {
@@ -4484,6 +4648,7 @@ function generate(seed2) {
   for (let i = 0; i < w.mat.length; i++) {
     if (w.mat[i] === Mat.Hull) w.hullCells.push(i);
   }
+  w.blueprintGrafts = [];
   w.blueprint = {
     mat: w.mat.slice(),
     machine: w.machine.slice(),
@@ -4492,6 +4657,9 @@ function generate(seed2) {
   };
   w.aggression = 0.1 + rng() * 0.3;
   w.brainId = 1;
+  for (const c of w.reactorCells) w.reactorOwner[c] = 1;
+  for (let i9 = 0; i9 < N; i9++)
+    if (w.mat[i9] === Mat.Machine && w.machine[i9] === Machine.CoolantTank) w.reactorOwner[i9] = 1;
   const habitable = rooms.filter(
     (r) => !r.isCorridor && (r.kind === "quarters" || r.kind === "hold") && r.w >= 6 && r.h >= 6
   );
@@ -4903,6 +5071,7 @@ function dreamShip(w, seed2) {
     }
     w.rooms.push(room);
   }
+  w.blueprintGrafts = [];
   w.blueprint = bp;
   w.aggression = 0.15 + mulberry32((seed2 ^ 2654435769) >>> 0)() * 0.55;
 }
@@ -4928,6 +5097,7 @@ function simTick(w, rnd2) {
   stepMachines(w);
   stepBotany(w, rnd2);
   stepBridgeGlow(w);
+  stepCondGlow(w);
   stepLeaks(w);
   stepGas(w);
   stepSmoke(w);
@@ -5178,6 +5348,7 @@ function cataclysm(w, cx, cy) {
   w.reactorCells.length = 0;
   w.buildPlans = [];
   w.blueprint = null;
+  w.blueprintGrafts = [];
   w.destruction += 600;
   w.networksDirty = true;
 }
@@ -5511,6 +5682,26 @@ function stampFireGlow(w, x, y) {
       if (dd > 2 && glowBlocked(w, x, y, ax, ay)) continue;
       const j2 = ay * W + ax;
       if (gl > w.fireGlow[j2]) w.fireGlow[j2] = gl;
+    }
+  }
+}
+function stepCondGlow(w) {
+  w.condGlow.fill(0);
+  for (const e of w.ents) {
+    if (e.hp <= 0 || e.kind !== EntKind.Weaver || e.cls !== 2) continue;
+    const rOut = 2.5;
+    for (let gy = -3; gy <= 3; gy++) {
+      const ay = e.y + gy;
+      if (ay < 0 || ay >= H) continue;
+      for (let gx = -3; gx <= 3; gx++) {
+        const ax = e.x + gx;
+        if (ax < 0 || ax >= W) continue;
+        const d = Math.sqrt(gx * gx + gy * gy);
+        if (d > rOut) continue;
+        const gl = Math.max(0, 1 - d / rOut);
+        const j2 = ay * W + ax;
+        if (gl > w.condGlow[j2]) w.condGlow[j2] = gl;
+      }
     }
   }
 }
@@ -5863,13 +6054,17 @@ const SPR = {
   [EntKind.Scav]: [0, 3, 0, 2, 1, 1, 0, 2, 0],
   [EntKind.Servitor]: [1, 1, 1, 1, 3, 1, 1, 2, 1],
   [EntKind.Weaver]: [1, 0, 1, 0, 3, 0, 1, 0, 1],
-  // the militor IS a servitor — same chassis, only the status dot differs
-  [EntKind.Militor]: [1, 1, 1, 1, 3, 1, 1, 2, 1],
+  // the militor wears TWO red eyes over a black chin — unmistakably armed
+  [EntKind.Militor]: [1, 3, 1, 1, 3, 1, 1, 2, 1],
   [EntKind.Mound]: [2, 1, 2, 1, 3, 1, 1, 1, 1],
   [EntKind.Shrub]: [0, 1, 0, 1, 3, 1, 0, 2, 0],
   [EntKind.Reaver]: [1, 1, 1, 1, 3, 1, 1, 2, 1]
   // full red bulk, white eye, black maw
 };
+const MATRIARCH_SPR = [1, 1, 1, 2, 3, 2, 1, 1, 1];
+const MATRIARCH_PAL = [[88, 48, 132], [14, 16, 20], [186, 130, 255]];
+const CONDUCTOR_SPR = [1, 2, 1, 1, 3, 1, 1, 2, 1];
+const CONDUCTOR_PAL = [[88, 48, 132], [14, 16, 20], [216, 170, 255]];
 const HAT = [
   [86, 148, 255],
   [255, 74, 48],
@@ -5883,8 +6078,8 @@ const PAL = {
   [EntKind.Servitor]: [[226, 232, 236], [150, 158, 165], [14, 16, 20]],
   // black dot: at work
   [EntKind.Weaver]: [[150, 122, 200], [96, 74, 134], [226, 206, 255]],
-  [EntKind.Militor]: [[226, 232, 236], [150, 158, 165], [235, 60, 45]],
-  // red dot: under arms
+  [EntKind.Militor]: [[226, 232, 236], [14, 16, 20], [235, 60, 45]],
+  // white chassis, black chin, red eyes
   [EntKind.Mound]: [[52, 108, 46], [30, 66, 30], [140, 200, 90]],
   // walking grove
   [EntKind.Shrub]: [[64, 122, 52], [38, 76, 36], [150, 210, 100]],
@@ -6001,7 +6196,7 @@ function render(w) {
         continue;
       }
       const rid = roomId[i];
-      const lc0 = Math.max(w.lightLevel[i], w.fireGlow[i], w.bridgeGlow[i]);
+      const lc0 = Math.max(w.lightLevel[i], w.fireGlow[i], w.bridgeGlow[i], w.condGlow[i]);
       const lc = lc0 > 1 ? 1 : lc0;
       let light = 0.2 + 0.8 * lc * lc * (3 - 2 * lc) * (0.4 + 0.6 * lc);
       let r = 0, g = 0, b = 0;
@@ -6199,6 +6394,14 @@ function render(w) {
           b += 22 * bg2;
         }
       }
+      {
+        const cg = w.condGlow[i];
+        if (cg > 0.04) {
+          r += 46 * cg;
+          g += 48 * cg;
+          b += 52 * cg;
+        }
+      }
       if (m === Mat.Lattice && (pipe[i] & Pipe.Wire) !== 0 && lc < 0.3) {
         const pulse = 0.7 + 0.3 * Math.sin(tick * 0.04 + (x + y) * 0.7);
         r += 6 * pulse;
@@ -6357,7 +6560,7 @@ function render(w) {
     const flash = tick - e.flash < 4;
     if (e.kind === EntKind.Brood) {
       const bI = e.y * W + e.x;
-      const bLc = Math.max(w.lightLevel[bI], w.fireGlow[bI], w.bridgeGlow[bI]);
+      const bLc = Math.max(w.lightLevel[bI], w.fireGlow[bI], w.bridgeGlow[bI], w.condGlow[bI]);
       const pulse = (0.85 + 0.15 * Math.sin(tick * 0.08)) * (0.4 + 0.6 * (bLc > 1 ? 1 : bLc));
       drawSprite(e.x, e.y, 2 * RS, BROOD_SPR, BROOD_PAL, pulse, flash);
       if (e.lin) {
@@ -6369,9 +6572,10 @@ function render(w) {
       continue;
     }
     const eI = e.y * W + e.x;
-    const eLc = Math.max(w.lightLevel[eI], w.fireGlow[eI], w.bridgeGlow[eI]);
+    const eLc = Math.max(w.lightLevel[eI], w.fireGlow[eI], w.bridgeGlow[eI], w.condGlow[eI]);
     let glow = 0.35 + 0.65 * (eLc > 1 ? 1 : eLc);
     let pal = PAL[e.kind];
+    let spr = SPR[e.kind];
     if (e.kind === EntKind.Egg) {
       glow *= 0.8 + 0.2 * hash(e.x, e.y, tick >> 4);
       if (e.cls === 1) pal = [[206, 130, 190], [140, 70, 128], [244, 190, 236]];
@@ -6379,15 +6583,17 @@ function render(w) {
       const hat = HAT[e.cls ?? 0];
       pal = [pal[0], pal[1], hat];
     } else if (e.kind === EntKind.Weaver && e.cls === 1) {
-      pal = [[88, 48, 132], [56, 28, 88], [186, 130, 255]];
+      pal = MATRIARCH_PAL;
+      spr = MATRIARCH_SPR;
     } else if (e.kind === EntKind.Weaver && e.cls === 2) {
-      pal = [[120, 80, 200], [70, 44, 130], [240, 220, 255]];
+      pal = CONDUCTOR_PAL;
+      spr = CONDUCTOR_SPR;
     } else if (e.kind === EntKind.Scav && e.cls === 1) {
       pal = [pal[0], pal[1], [255, 214, 90]];
     } else if (e.kind === EntKind.Scav && e.cls === 2) {
       pal = [[150, 150, 156], [96, 96, 102], [210, 210, 216]];
     }
-    drawSprite(e.x, e.y, RS, SPR[e.kind], pal, glow, flash);
+    drawSprite(e.x, e.y, RS, spr, pal, glow, flash);
     if ((e.kind === EntKind.Servitor || e.kind === EntKind.Militor || e.kind === EntKind.Reaver) && e.brain) {
       const q = (e.brain - 1) % 4;
       const c = BADGE[(e.brain - 1) % 8];
@@ -6403,13 +6609,8 @@ function render(w) {
   }
   for (const sh of w.shots) {
     const age = (tick - sh.t) / 8;
-    if (age > 1) continue;
-    if (sh.k === 0) {
-      const bx = (sh.x0 + (sh.x1 - sh.x0) * age + 0.5) * RS;
-      const by = (sh.y0 + (sh.y1 - sh.y0) * age + 0.5) * RS;
-      const bi = (by | 0) * PW + (bx | 0);
-      if (bi >= 0 && bi < px.length) px[bi] = pack(255, 244, 180);
-    } else {
+    if (age < 0 || age > 1) continue;
+    if (sh.k !== 0) {
       for (let k = 0; k < 5; k++) {
         const p = Math.min(1, age * 1.4) * (0.35 + k * 0.16);
         const jx = (hash(sh.x0 + k, sh.y0, tick) - 0.5) * 1.6 * p;
@@ -6829,8 +7030,8 @@ function paintLegend() {
   paint2("sw-servitor", 3, SPR[EntKind.Servitor], PAL[EntKind.Servitor]);
   paint2("sw-militor", 3, SPR[EntKind.Militor], PAL[EntKind.Militor]);
   paint2("sw-weaver", 3, SPR[EntKind.Weaver], PAL[EntKind.Weaver]);
-  paint2("sw-matriarch", 3, SPR[EntKind.Weaver], [[88, 48, 132], [56, 28, 88], [186, 130, 255]]);
-  paint2("sw-conductor", 3, SPR[EntKind.Weaver], [[120, 80, 200], [70, 44, 130], [240, 220, 255]]);
+  paint2("sw-matriarch", 3, MATRIARCH_SPR, MATRIARCH_PAL);
+  paint2("sw-conductor", 3, CONDUCTOR_SPR, CONDUCTOR_PAL);
   paint2("sw-mound", 3, SPR[EntKind.Mound], PAL[EntKind.Mound]);
   paint2("sw-shrub", 3, SPR[EntKind.Shrub], PAL[EntKind.Shrub]);
   paint2("sw-reaver", 3, SPR[EntKind.Reaver], PAL[EntKind.Reaver]);
@@ -7016,7 +7217,12 @@ function updateInspector(w) {
         head += ` · ${brainNameFn(w.brainId)}`;
         headHtml = ` ${swatchHtml(w.brainId)}#${w.brainId}`;
       } else {
-        head += " · unclaimed spare";
+        const own = w.reactorOwner[i];
+        const crewed = own > 0 && w.ents.some(
+          (o) => o.hp > 0 && o.brain === own && (o.kind === EntKind.Servitor || o.kind === EntKind.Militor)
+        );
+        head += own > 0 ? ` · ${brainNameFn(own)} (${crewed ? "rival" : "dormant"})` : " · dormant heart";
+        if (own > 0) headHtml = ` ${swatchHtml(own)}#${own}`;
       }
     }
   }
@@ -7315,6 +7521,32 @@ function loop() {
       ctx.globalAlpha = 1;
       ctx.setLineDash([]);
     }
+    if (world.shots.length) {
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = "rgba(255, 236, 170, 0.13)";
+      ctx.beginPath();
+      const heads = [];
+      for (const sh of world.shots) {
+        if (sh.k !== 0) continue;
+        const a = (world.tick - sh.t) / 8;
+        if (a < 0 || a > 1) continue;
+        const sx0 = (sh.x0 + 0.5 - viewX) * cellW;
+        const sy0 = (sh.y0 + 0.5 - viewY) * cellH;
+        const sx1 = (sh.x1 + 0.5 - viewX) * cellW;
+        const sy1 = (sh.y1 + 0.5 - viewY) * cellH;
+        const hx = sx0 + (sx1 - sx0) * a;
+        const hy = sy0 + (sy1 - sy0) * a;
+        const t0 = Math.max(0, a - 0.3);
+        ctx.moveTo(sx0 + (sx1 - sx0) * t0, sy0 + (sy1 - sy0) * t0);
+        ctx.lineTo(hx, hy);
+        heads.push(hx, hy);
+      }
+      ctx.stroke();
+      ctx.fillStyle = "rgba(255, 250, 205, 1)";
+      for (let h2 = 0; h2 < heads.length; h2 += 2) {
+        ctx.fillRect(Math.round(heads[h2]), Math.round(heads[h2 + 1]), 1, 1);
+      }
+    }
     const claimA = (0.5 + 0.5 * Math.sin(frame * 0.22) ** 2).toFixed(3);
     const CLAIM_MACHINE = `rgba(109, 85, 200, ${claimA})`;
     const CLAIM_SQUAD = `rgba(255, 200, 64, ${claimA})`;
@@ -7339,6 +7571,11 @@ function loop() {
       ctx.lineDashOffset = first === void 0 ? claimPhase : claimPhase + 3;
       ctx.strokeStyle = machineHand ? CLAIM_MACHINE : CLAIM_SQUAD;
       ctx.strokeRect(Math.round(dx) + 0.5, Math.round(dy) + 0.5, Math.round(cellW) - 1, Math.round(cellH) - 1);
+      if (machineHand && e.brain) {
+        const bc = BADGE[(e.brain - 1) % 8];
+        ctx.strokeStyle = `rgba(${bc[0]}, ${bc[1]}, ${bc[2]}, ${claimA})`;
+        ctx.strokeRect(Math.round(dx) + 2.5, Math.round(dy) + 2.5, Math.round(cellW) - 5, Math.round(cellH) - 5);
+      }
     }
     ctx.setLineDash([]);
     ctx.restore();
