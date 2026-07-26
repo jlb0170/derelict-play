@@ -7235,16 +7235,22 @@ function loop() {
       ctx.globalAlpha = 1;
       ctx.setLineDash([]);
     }
-    ctx.strokeStyle = `rgba(255, 214, 64, ${(0.5 + 0.5 * Math.sin(frame * 0.22) ** 2).toFixed(3)})`;
+    const claimA = (0.5 + 0.5 * Math.sin(frame * 0.22) ** 2).toFixed(3);
+    const CLAIM_MACHINE = `rgba(109, 85, 200, ${claimA})`;
+    const CLAIM_SQUAD = `rgba(255, 200, 64, ${claimA})`;
     ctx.lineWidth = 1;
     ctx.setLineDash([3, 3]);
     ctx.lineDashOffset = -(frame * 0.6 % 12);
     for (const e of world.ents) {
-      if (e.kind !== EntKind.Servitor && e.kind !== EntKind.Militor) continue;
-      if (e.hp <= 0 || e.tx === void 0 || e.tx < 0 || (e.mode ?? 0) >= 3) continue;
+      const machineHand = e.kind === EntKind.Servitor || e.kind === EntKind.Militor;
+      const squadHand = e.kind === EntKind.Breacher && e.cls === 1 && e.patrol !== true;
+      if (!machineHand && !squadHand) continue;
+      if (e.hp <= 0 || e.tx === void 0 || e.tx < 0) continue;
+      if (machineHand && (e.mode ?? 0) >= 3) continue;
       const dx = (e.tx - viewX) * cellW;
       const dy = (e.ty - viewY) * cellH;
       if (dx < -cellW || dy < -cellH || dx > canvas.width || dy > canvas.height) continue;
+      ctx.strokeStyle = machineHand ? CLAIM_MACHINE : CLAIM_SQUAD;
       ctx.strokeRect(Math.round(dx) + 0.5, Math.round(dy) + 0.5, Math.round(cellW) - 1, Math.round(cellH) - 1);
     }
     ctx.setLineDash([]);
