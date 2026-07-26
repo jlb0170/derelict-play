@@ -353,7 +353,7 @@ function rebuildClaims(w) {
   claimCell.clear();
   for (const o of w.ents) {
     if (o.hp <= 0 || o.tx === void 0 || o.tx < 0) continue;
-    if (o.kind !== EntKind.Servitor && o.kind !== EntKind.Militor && o.kind !== EntKind.Scav) continue;
+    if (o.kind !== EntKind.Servitor && o.kind !== EntKind.Militor && o.kind !== EntKind.Scav && o.kind !== EntKind.Breacher) continue;
     claimCell.set(o.ty * W + o.tx, o);
   }
 }
@@ -2020,6 +2020,19 @@ function stepLeader(w, e, target, rnd2) {
   }
   moveAlongPath(w, e, gx, gy, rnd2);
 }
+const SLOT_OFF = [[2, 0], [-2, 0], [0, 2], [0, -2], [2, 2], [-2, -2], [-2, 2], [2, -2]];
+function formationGoal(w, e, leader) {
+  let idx = 0;
+  for (const o of w.ents) {
+    if (o === e) break;
+    if (o.kind === EntKind.Breacher && o.hp > 0 && o.team === e.team) idx++;
+  }
+  const off2 = SLOT_OFF[idx % SLOT_OFF.length];
+  const gx = leader.x + off2[0];
+  const gy = leader.y + off2[1];
+  if (gx >= 1 && gx < W - 1 && gy >= 1 && gy < H - 1 && entPass(w.mat[gy * W + gx])) return [gx, gy];
+  return [leader.x, leader.y];
+}
 function stepTrooper(w, e, target, rnd2) {
   if (target) {
     if (e.cls === 1) {
@@ -2051,31 +2064,45 @@ function stepTrooper(w, e, target, rnd2) {
     leader = null;
   }
   if (leader) {
-    const d = Math.abs(leader.x - e.x) + Math.abs(leader.y - e.y);
-    if (d > 4) {
-      moveAlongPath(w, e, leader.x, leader.y, rnd2);
-      return;
-    }
     if (e.cls === 1 && !nearestEnt(w, e, isXeno, 8)) {
-      if (torchNear(w, e)) return;
-      const g = nearestGrowthCell(w, e.x, e.y, 8);
+      if (torchNear(w, e)) {
+        e.tx = -1;
+        return;
+      }
+      const g = nearestGrowthCell(w, e.x, e.y, 8, e);
       if (g >= 0) {
         const gx = g % W;
         const gy = g / W | 0;
-        if (Math.abs(gx - leader.x) + Math.abs(gy - leader.y) <= 8) {
+        if (Math.abs(gx - leader.x) + Math.abs(gy - leader.y) <= 10) {
+          e.tx = gx;
+          e.ty = gy;
+          claim(g, e);
           moveAlongPath(w, e, gx, gy, rnd2);
           return;
         }
       }
+      e.tx = -1;
+    }
+    const [fx, fy] = formationGoal(w, e, leader);
+    const d = Math.abs(fx - e.x) + Math.abs(fy - e.y);
+    if (d > 2) {
+      moveAlongPath(w, e, fx, fy, rnd2);
+      return;
     }
     if (rnd2() < 0.4) wander(w, e, rnd2);
     return;
   }
   if (e.cls === 1 && !nearestEnt(w, e, isXeno, 8)) {
-    if (torchNear(w, e)) return;
-    const g = nearestGrowthCell(w, e.x, e.y, 8);
+    if (torchNear(w, e)) {
+      e.tx = -1;
+      return;
+    }
+    const g = nearestGrowthCell(w, e.x, e.y, 8, e);
     if (g >= 0) {
-      moveAlongPath(w, e, g % W, g / W | 0, rnd2);
+      e.tx = g % W;
+      e.ty = g / W | 0;
+      claim(g, e);
+      moveAlongPath(w, e, e.tx, e.ty, rnd2);
       return;
     }
   }
@@ -2206,7 +2233,7 @@ function resinNear(w, e, r) {
     }
   return false;
 }
-function nearestGrowthCell(w, x, y, r) {
+function nearestGrowthCell(w, x, y, r, asker) {
   let best = -1;
   let bestD = Infinity;
   for (let dy = -r; dy <= r; dy++) {
@@ -2215,6 +2242,7 @@ function nearestGrowthCell(w, x, y, r) {
       const ny = y + dy;
       if (nx < 1 || nx >= W - 1 || ny < 1 || ny >= H - 1) continue;
       if (w.mat[ny * W + nx] !== Mat.Growth) continue;
+      if (asker && claimedBy(ny * W + nx, asker)) continue;
       const d = Math.abs(dx) + Math.abs(dy);
       if (d < bestD) {
         bestD = d;
