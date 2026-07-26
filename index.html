@@ -136,6 +136,38 @@
         background: #10131a;
         position: relative;
       }
+      #about-btn {
+        background: #161b22; color: #8b949e; border: 1px solid #30363d;
+        font: inherit; padding: 2px 9px; cursor: pointer; margin-right: 6px;
+      }
+      #about-btn:hover { color: #c8d0da; border-color: #8b949e; }
+      #about {
+        position: fixed; inset: 0; z-index: 40;
+        background: rgba(4, 6, 10, 0.82);
+        display: flex; align-items: flex-start; justify-content: center;
+        overflow-y: auto; padding: 4vh 16px;
+      }
+      #about[hidden] { display: none; }
+      #about-card {
+        max-width: 640px; background: #0b0e14; border: 1px solid #30363d;
+        padding: 28px 34px 22px; color: #9aa4b2;
+        font-size: 13px; line-height: 1.65;
+      }
+      #about-card h1 { color: #e6edf3; font-size: 18px; letter-spacing: 6px; margin: 0 0 4px; }
+      #about-card h2 { font-size: 12px; letter-spacing: 3px; margin: 22px 0 4px; color: #c8d0da; }
+      #about-card p { margin: 8px 0; }
+      #about-card i { color: #c8d0da; font-style: italic; }
+      .ab-lede { color: #c8d0da; font-style: italic; }
+      .ab-machine { color: #e2e8ec !important; }
+      .ab-hive { color: #c86ad2 !important; }
+      .ab-marine { color: #9fc2ff !important; }
+      .ab-scav { color: #ce8a40 !important; }
+      .ab-weaver { color: #a97ee0 !important; }
+      .ab-green { color: #76c458 !important; }
+      .ab-teller { color: #d9b84a !important; }
+      .ab-light { color: #fff3c4 !important; }
+      .ab-rules, .ab-you { color: #8b949e; }
+      .ab-close-hint { color: #565d66; text-align: center; margin-top: 18px !important; font-size: 11px; }
       #status {
         display: flex;
         gap: 14px;
@@ -230,7 +262,7 @@
       #inspect .bad { color: #c9452a; }
       #inspect .ent { color: #9ec9a2; }
     </style>
-    <script type="module" crossorigin src="./assets/index-DNCZEVw8.js"></script>
+    <script type="module" crossorigin src="./assets/index-CRkcq38k.js"></script>
   </head>
   <body>
     <div id="topbar">
@@ -269,6 +301,7 @@
     </div>
     <div id="toolbar">
       <div id="act-wrap">
+        <button id="about-btn">?</button>
         <button id="act-btn"><b>⚡</b>ACT</button>
         <div id="act-menu" hidden>
           <button class="tool" data-tool="0"><b>1</b>BREACH</button>
@@ -293,5 +326,82 @@
     </div>
     <div id="hint">wheel zoom &middot; right/middle-drag or WASD pan &middot; R new derelict &middot; SPACE pause &middot; [ ] sim speed</div>
     <div id="inspect"></div>
+    <div id="about" hidden>
+      <div id="about-card">
+        <h1>D E R E L I C T</h1>
+        <p class="ab-lede">A ship that died a long time ago, and the things that refuse to agree about what that means.</p>
+
+        <p>This is not a game. There is nothing to win. It is a terrarium of endings — a hulk adrift in
+        hard vacuum, still burning, still leaking, still <i>arguing with itself</i>. Nothing in it needs you.
+        The fires spread by their own arithmetic. The factions multiply, starve, and mourn on schedules of
+        their own. You may lean in and disturb it, and the board will fold your violence into its history
+        and continue. The number at the top is not your score. It is the ship's fever.</p>
+
+        <h2 class="ab-machine">THE HEARTS</h2>
+        <p>Somewhere in the wreck a reactor still beats, and it <i>remembers</i>. It holds a dream of the whole
+        ship — every corridor, every lamp, every coolant run — and it spends its servitors like patient coins
+        to make the wreck agree with the memory. Watch the lights come on behind them, room by room, radiating
+        out from the core. A heart that cannot cool itself is a countdown; its crews know this, and build
+        accordingly, and are not always fast enough.</p>
+        <p>When a heart dies, another wakes with a different name and a different dream. Rival crews will pave
+        across each other's works without malice — over conduits, over coolant, over a standing crown if the
+        blueprint says corridor. It is not war as hatred. It is war as a disagreement about the drawing, waged
+        in poured deck plate, and it has ended worlds.</p>
+
+        <h2 class="ab-hive">THE HIVE</h2>
+        <p>She arrives as a spore and becomes a hunger with a name. Resin creeps outward from her — a wet violet
+        web that swallows doorways whole — and her daughters carry her mark on their flank for as long as the
+        dynasty holds. The dark is her half of the ship. She is patient about the rest of it.</p>
+
+        <h2 class="ab-marine">THE PODS</h2>
+        <p>When the infestation reads loud enough on sensors very far away, pods slam through the hull and
+        squads walk out in wedges. Gunners brace in doorways and let what is coming come. Torchers burn the
+        nest, and when a corridor disagrees with them, they hold a flame to the wall until the wall stops
+        disagreeing. The squads did not come to save the ship. They came because something has to answer.</p>
+
+        <h2 class="ab-scav">THE SALVAGE</h2>
+        <p>They owe nothing to anyone. They clamp on quietly, bite an airlock through the plating, and strip
+        whatever sells — the conduit out of the wall, the machine off its mounts, the crown out of the throne
+        room, under a screen of smoke if it comes to that. When the holds are full or the blood is theirs,
+        they cast off. Word spreads either way.</p>
+
+        <h2 class="ab-weaver">THE WEAVERS</h2>
+        <p>To the weavers the void is not empty; it is <i>unfinished</i>. They throw lace across every breach —
+        lattice eating the dark hole of space with web and structure — and where two of them dance too long a
+        matriarch is born, who bridges what no one else would bridge. Where two matriarchs dance, a conductor:
+        a fixture that walks, lit like a lamp, laying a filament that glows green over nothing at all. The
+        lightbridges are never dark. Almost nothing else can say that.</p>
+
+        <h2 class="ab-green">THE GREEN</h2>
+        <p>Where coolant pools and any light falls, the green remembers what it was for. Vines walk the spilled
+        water toward the lamps; groves thicken; and when the groves grow dense enough, something in them wakes
+        up and stands, and it is territorial about the garden. Burning it is remembered.</p>
+
+        <h2 class="ab-teller">THE STORYTELLER</h2>
+        <p>Above it all, something reads the board the way you are reading it now, and it despises a still lake.
+        When the ship goes quiet too long it takes inventory of what is missing — prey, hunters, hands, weavers —
+        and sends exactly that. You will see its work announced on the wire. It is not on anyone's side.
+        It is on the side of the fever.</p>
+
+        <h2 class="ab-light">THE LIGHT AND THE DARK</h2>
+        <p>The true war is older than the factions and does not coincide with them. Every lamp that comes on is
+        territory taken; every corridor that goes dark changes hands. Firelight counts, briefly and at a price.
+        The hive breeds royalty only in darkness; the crews see their claims; the green leans toward whatever
+        glow it can find. Every faction is on both sides of this war at once, and none of them knows it is
+        fighting it.</p>
+
+        <h2>THE RULES, GESTURED AT</h2>
+        <p class="ab-rules">Fire eats what it can reach and is owed a wall. Coolant quenches; vacuum starves; a breach is a wind
+        that does not stop. The dashed squares are promises — each one a cell some hand has sworn to work, in
+        the color of its allegiance, and two colors on one square is a quarrel you are watching in real time.
+        The white dots are where a thing may walk. The rest you will have to imagine, and you will be
+        imperfectly right, which is the intended condition.</p>
+
+        <p class="ab-you">You have a small menu of harms and seeds. Use them or don't. Slow the world down and watch one fire
+        make one decision. If you read all of this and still do not know what you are looking at — correct.
+        Neither does anything on the ship.</p>
+        <p class="ab-close-hint">esc or ? to return</p>
+      </div>
+    </div>
   </body>
 </html>

@@ -7066,10 +7066,28 @@ legendEl.addEventListener("click", (ev) => {
   }
 }, sig);
 window.addEventListener("keydown", (ev) => {
+  if (ev.key === "?") {
+    toggleAbout();
+    return;
+  }
+  if (ev.key === "Escape" && !aboutEl.hidden) {
+    toggleAbout(false);
+    return;
+  }
   if (ev.key === "Escape" && paint) {
     paint = null;
     legendEl.querySelectorAll(".painting").forEach((n) => n.classList.remove("painting"));
   }
+}, sig);
+const aboutEl = document.getElementById("about");
+const aboutBtn = document.getElementById("about-btn");
+function toggleAbout(force) {
+  const show = force ?? aboutEl.hidden;
+  aboutEl.hidden = !show;
+}
+aboutBtn.addEventListener("click", () => toggleAbout(), sig);
+aboutEl.addEventListener("click", (ev) => {
+  if (ev.target === aboutEl) toggleAbout(false);
 }, sig);
 const actBtn = document.getElementById("act-btn");
 const actMenu = document.getElementById("act-menu");
