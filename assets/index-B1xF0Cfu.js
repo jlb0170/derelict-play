@@ -1415,7 +1415,7 @@ function countKind(w, kind) {
 const bfsPrev = new Int32Array(N);
 const bfsSeen = new Uint8Array(N);
 const bfsQueue = new Int32Array(N);
-function findPath(w, from, to) {
+function findPath(w, from, to, avoidOcc = false) {
   if (from === to) return [];
   bfsSeen.fill(0);
   let head = 0;
@@ -1433,6 +1433,7 @@ function findPath(w, from, to) {
       const m = w.mat[j];
       if (!(entPass(m) || m === Mat.DoorClosed) && j !== to) continue;
       if (w.burn[j] > 0 && j !== to) continue;
+      if (avoidOcc && occ[j] && j !== to) continue;
       bfsSeen[j] = 1;
       bfsPrev[j] = i;
       if (j === to) {
@@ -1504,6 +1505,14 @@ function moveAlongPath(w, e, gx, gy, rnd2) {
         e.tx = -1;
       }
       return;
+    }
+    if (rnd2() < 0.3) {
+      const detour = findPath(w, e.y * W + e.x, goal, true);
+      if (detour) {
+        e.path = detour;
+        e.pi = 0;
+        return;
+      }
     }
     const r = rnd2();
     if (r < 0.3) {
@@ -2048,6 +2057,69 @@ function stepTrooper(w, e, target, rnd2) {
     }
     moveAlongPath(w, e, target.e.x, target.e.y, rnd2);
     return;
+  }
+  if (e.cls === 1) {
+    if (e.cutI !== void 0 && e.cutI >= 0) {
+      const cm = w.mat[e.cutI];
+      const cd = Math.abs(e.cutI % W - e.x) + Math.abs((e.cutI / W | 0) - e.y);
+      if (cm !== Mat.Wall && cm !== Mat.Hull || cd !== 1) {
+        e.cutI = -1;
+      } else {
+        w.burn[e.cutI] = 1.2;
+        if (w.tick >= (e.workT ?? 0)) {
+          w.mat[e.cutI] = Mat.Floor;
+          w.burn[e.cutI] = 0;
+          w.air[e.cutI] = 0;
+          w.solidFuel[e.cutI] = 0;
+          w.pipeBroken[e.cutI] = w.pipe[e.cutI] !== 0 ? 1 : 0;
+          w.networksDirty = true;
+          w.destruction += 2;
+          w.pushNews("acetylene BREACH — a torcher cuts through the plating");
+          e.cutI = -1;
+          e.sulk = 0;
+          e.path = null;
+        }
+        return;
+      }
+    }
+    if (e.sulk !== void 0 && w.tick < e.sulk) {
+      const officer = nearestLeader(w, e);
+      let wantX = -1;
+      let wantY = -1;
+      if (officer && Math.abs(officer.x - e.x) + Math.abs(officer.y - e.y) > 4) {
+        wantX = officer.x;
+        wantY = officer.y;
+      } else {
+        const g = nearestGrowthCell(w, e.x, e.y, 12, e);
+        if (g >= 0) {
+          wantX = g % W;
+          wantY = g / W | 0;
+        }
+      }
+      if (wantX >= 0) {
+        let best = -1;
+        let bestD = Infinity;
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nx2 = e.x + dx;
+          const ny2 = e.y + dy;
+          if (nx2 < 1 || nx2 >= W - 1 || ny2 < 1 || ny2 >= H - 1) continue;
+          const j = ny2 * W + nx2;
+          if (w.mat[j] !== Mat.Wall && w.mat[j] !== Mat.Hull) continue;
+          const dd = Math.abs(wantX - nx2) + Math.abs(wantY - ny2);
+          if (dd < bestD) {
+            bestD = dd;
+            best = j;
+          }
+        }
+        if (best >= 0 && bestD < Math.abs(wantX - e.x) + Math.abs(wantY - e.y)) {
+          e.cutI = best;
+          e.workT = w.tick + (w.mat[best] === Mat.Hull ? 480 : 300);
+          return;
+        }
+        moveToward(w, e, wantX, wantY, rnd2);
+        return;
+      }
+    }
   }
   if (e.cls === 0) {
     const far = nearestEnt(w, e, (o) => isMarineTarget(o) && o.kind !== EntKind.Brood, 28);
@@ -4032,6 +4104,7 @@ function describeTask(w, e) {
       if (!leader) return `${who}: no squad leader — patrolling`;
       const d = Math.abs(leader.x - e.x) + Math.abs(leader.y - e.y);
       if (d > 4) return `${who}: rejoining the squad`;
+      if (e.cls === 1 && e.cutI !== void 0 && e.cutI >= 0) return "cutting through the plating";
       if (e.cls === 1) return "torcher: burning the resin";
       return "gunner: holding formation";
     }
@@ -6005,10 +6078,14 @@ function render(w) {
         }
         case Mat.Growth: {
           const vein = hash(x * 3, y * 3, 0);
-          r = (44 + 30 * vein) * noise;
-          g = (30 + 14 * vein) * noise;
-          b = (52 + 34 * vein) * noise;
-          const pulse = 0.92 + 0.08 * Math.sin(tick * 0.03 + vein * 12);
+          r = (62 + 36 * vein) * noise;
+          g = (30 + 12 * vein) * noise;
+          b = (92 + 52 * vein) * noise;
+          if (vein > 0.82) {
+            r += 28;
+            b += 46;
+          }
+          const pulse = 0.88 + 0.12 * Math.sin(tick * 0.03 + vein * 12);
           r *= pulse;
           g *= pulse;
           b *= pulse;
@@ -6374,8 +6451,9 @@ let world;
 let seed = Math.random() * 4294967295 >>> 0;
 const rnd = mulberry32(Math.random() * 4294967295 >>> 0);
 let paused = false;
-const SPEEDS = [0.5, 1, 2, 4];
-let speedIdx = 1;
+const SPEEDS = [1 / 300, 1 / 60, 1 / 12, 1 / 4, 0.5, 1, 2, 4];
+const SPEED_LABELS = ["1 tick/5s", "1 tick/s", "5 t/s", "15 t/s", "0.5×", "1×", "2×", "4×"];
+let speedIdx = 5;
 let frame = 0;
 let tool = 0;
 let paint = null;
@@ -6846,6 +6924,7 @@ elReactor.parentElement.addEventListener("mouseleave", () => {
 elReactor.parentElement.style.cursor = "help";
 const elFps = document.getElementById("st-fps");
 const elTick = document.getElementById("st-tick");
+const elSpeed = document.getElementById("st-speed");
 const elNews = document.getElementById("news-line");
 let fps = 60;
 let lastT = performance.now();
@@ -6902,6 +6981,7 @@ function updateHud(w) {
   elReactor.style.color = color;
   elTick.textContent = w.tick < 1e4 ? String(w.tick) : `${(w.tick / 1e3).toFixed(w.tick < 1e5 ? 1 : 0)}k`;
   elFps.textContent = fps.toFixed(0);
+  elSpeed.textContent = paused ? "paused" : SPEED_LABELS[speedIdx];
   const latest = w.news[w.news.length - 1];
   if (latest) {
     const age = Math.max(0, (w.tick - latest.t) / 60 | 0);
