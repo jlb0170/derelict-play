@@ -117,6 +117,8 @@ class World {
     // precomputed star brightness for space cells
     __publicField(this, "stain", new Float32Array(N));
     // dried blood; the deck remembers every kill
+    __publicField(this, "ecto", new Float32Array(N));
+    // where a haunt unraveled — spectral residue, the ashen trigger
     __publicField(this, "rooms", []);
     __publicField(this, "reactorCells", []);
     __publicField(this, "ventCells", []);
@@ -167,6 +169,8 @@ class World {
     // lightbridge pulse — slow, steady, violet
     __publicField(this, "condGlow", new Float32Array(W * H));
     // conductors carry their own white lamp, radius 2
+    __publicField(this, "darkGlow", new Float32Array(W * H));
+    // ghast/ashen radiance: the dark that pushes back
     __publicField(this, "wirePowered", new Uint8Array(W * H));
     // snapshot of the live power flood
     __publicField(this, "reactorOwner", new Uint16Array(W * H));
@@ -197,6 +201,8 @@ class World {
     __publicField(this, "crewDeaths", []);
     // where the machines died; militors answer
     __publicField(this, "shots", []);
+    __publicField(this, "bursts", []);
+    // darkburst wavefront cells, amp = radius falloff
     __publicField(this, "fuelReserve", 6e3);
     __publicField(this, "coolantReserve", 3e3);
     __publicField(this, "coolantTankCells", 0);
@@ -297,9 +303,12 @@ const EntKind = {
   Militor: 7,
   Mound: 8,
   Shrub: 9,
-  Reaver: 10
+  Reaver: 10,
+  Haunt: 11,
+  Ghast: 12,
+  Ashen: 13
 };
-const FACTION = [0, 0, 0, 1, 2, 3, 4, 3, 5, 5, 3];
+const FACTION = [0, 0, 0, 1, 2, 3, 4, 3, 5, 5, 3, 6, 6, 6];
 const GONE = -424242;
 const BRAIN_NAMES = [
   "VULCAN",
@@ -322,20 +331,25 @@ function brainName(id) {
 const Stance = { Ignore: 0, Foe: 1, Prey: 2, Fear: 3 };
 const I = Stance.Ignore, F = Stance.Foe, P = Stance.Prey, R = Stance.Fear;
 const STANCE = [
-  // toward:  xeno marine scav ship vine flora
+  // toward:  xeno marine scav ship vine flora dead
   /* xeno  */
-  [I, P, P, P, I, I],
+  [I, P, P, P, I, I, R],
+  // the living fear the dead
   /* marine*/
-  [F, I, F, I, I, I],
+  [F, I, F, I, I, I, F],
+  // the dead draw fire
   /* scav  */
-  [R, R, I, I, I, R],
+  [R, R, I, I, I, R, R],
   /* ship  */
-  [F, I, I, I, I, I],
+  [F, I, I, I, I, I, F],
   /* vine  */
-  [I, I, I, I, I, I],
+  [I, I, I, I, I, I, I],
   /* flora */
-  [I, I, I, I, I, I]
+  [I, I, I, I, I, I, I],
   // mound rage is territorial, not doctrinal
+  /* dead  */
+  [F, F, F, F, I, I, I]
+  // the drowned hate ALL the living
 ];
 function stance(viewer, other) {
   let s = STANCE[FACTION[viewer.kind]][FACTION[other.kind]];
@@ -353,12 +367,13 @@ const isMarineTarget = (o) => {
 };
 const isWarmBody = (o) => STANCE[0][FACTION[o.kind]] === Stance.Prey;
 const SCAV_PROBE = { kind: EntKind.Scav };
+const isDrowned = (o) => FACTION[o.kind] === 6;
 const isScary = (o) => {
   const s = stance(SCAV_PROBE, o);
   return s === Stance.Fear || s === Stance.Foe;
 };
 const Mode = { Idle: 0, Job: 1, Plan: 2, Survey: 3, Home: 4 };
-const CADENCE = [24, 30, 5, 9, 8, 8, 14, 8, 26, 44, 4];
+const CADENCE = [24, 30, 5, 9, 8, 8, 14, 8, 26, 44, 4, 10, 9, 4];
 const claimCell = /* @__PURE__ */ new Map();
 function rebuildClaims(w) {
   claimCell.clear();
@@ -1905,6 +1920,375 @@ function stepRoamer(w, e, rnd2) {
     if (rnd2() < 0.15) w.temp[ci] = Math.min(1500, w.temp[ci] + 460);
   }
 }
+const isPrey = (o) => FACTION[o.kind] === 0 || FACTION[o.kind] === 6;
+function spawnReaver(w, x, y, brain) {
+  w.ents.push({ kind: EntKind.Reaver, x, y, hp: 280, cd: 0, timer: 0, flash: -99, brain });
+  occ[y * W + x] = 1;
+}
+function stepReaver(w, e, rnd2) {
+  const prey = nearestEnt(w, e, (o) => o.kind === EntKind.Ashen, 40) ?? nearestEnt(w, e, isPrey, 24);
+  if (!prey) {
+    if (countKind(w, EntKind.Roamer) >= 10) {
+      let far = null;
+      let fd = Infinity;
+      for (const o of w.ents) {
+        if (!isPrey(o) || o.hp <= 0) continue;
+        const d = Math.abs(o.x - e.x) + Math.abs(o.y - e.y);
+        if (d < fd) {
+          fd = d;
+          far = o;
+        }
+      }
+      if (far) {
+        moveAlongPath(w, e, far.x, far.y, rnd2);
+        return;
+      }
+    }
+    if (countKind(w, EntKind.Roamer) < 10) {
+      if (w.reactorCells.length) {
+        const rc = w.reactorCells[0];
+        const rx = rc % W;
+        const ry = rc / W | 0;
+        if (Math.abs(e.x - rx) + Math.abs(e.y - ry) <= 3) {
+          w.pushNews("the hunt is done — the vault seals");
+          e.hp = 0;
+          e.departed = true;
+          return;
+        }
+        moveAlongPath(w, e, rx, ry, rnd2);
+        return;
+      }
+      if (rnd2() < 0.02) {
+        e.hp = 0;
+        e.departed = true;
+        return;
+      }
+    }
+    if (rnd2() < 0.5) wander(w, e, rnd2);
+    return;
+  }
+  if (w.tick >= (e.workT ?? 0)) {
+    let fired = 0;
+    for (const o of w.ents) {
+      if (fired >= 2) break;
+      if (!isPrey(o) || o.hp <= 0) continue;
+      const d = Math.abs(o.x - e.x) + Math.abs(o.y - e.y);
+      if (d < 2 || d > 3) continue;
+      fireGout(w, e.x, e.y, o.x, o.y, rnd2, isPrey, 3);
+      fired++;
+    }
+    if (fired > 0) {
+      e.flash = w.tick;
+      e.workT = w.tick + 18;
+    }
+  }
+  let swung = false;
+  if (w.tick >= e.timer) {
+    for (const o of w.ents) {
+      if (!isPrey(o) || o.hp <= 0) continue;
+      if (Math.abs(o.x - e.x) + Math.abs(o.y - e.y) <= 1) {
+        if (FACTION[o.kind] === 6) {
+          spectralHit(w, o, 6, rnd2);
+        } else {
+          o.hp -= 6;
+        }
+        o.flash = w.tick;
+        if (o.kind === EntKind.Brood) alarmHive(w, o.x, o.y);
+        if (o.hp <= 0) splatter(w, o);
+        swung = true;
+      }
+    }
+    if (swung) {
+      e.flash = w.tick;
+      e.timer = w.tick + 10;
+    }
+  }
+  if (swung) {
+    let packX = 0;
+    let packY = 0;
+    let packN = 0;
+    for (const o of w.ents) {
+      if (!isPrey(o) || o.hp <= 0) continue;
+      if (Math.abs(o.x - e.x) + Math.abs(o.y - e.y) <= 2) {
+        packX += o.x;
+        packY += o.y;
+        packN++;
+      }
+    }
+    if (packN >= 3) {
+      moveToward(w, e, e.x * 2 - Math.round(packX / packN), e.y * 2 - Math.round(packY / packN), rnd2);
+    }
+    return;
+  }
+  if (prey.d > 1) moveAlongPath(w, e, prey.e.x, prey.e.y, rnd2);
+}
+function reaverPulse(w, rnd2) {
+  if (w.tick % 900 !== 0) return;
+  if (!w.reactorAlive || !w.reactorCells.length) return;
+  const roamers = countKind(w, EntKind.Roamer);
+  const reavers = countKind(w, EntKind.Reaver);
+  if (roamers >= 50 && reavers === 0 && rnd2() < 0.6) {
+    for (const j of w.periReactor) {
+      if (j >= 0 && j < N && entPass(w.mat[j]) && !occ[j]) {
+        w.pushNews("THE VAULT OPENS — a reaver walks");
+        spawnReaver(w, j % W, j / W | 0, w.brainId);
+        return;
+      }
+    }
+  }
+}
+const SCAR = 0.15;
+function spawnHaunt(w, x, y) {
+  w.ents.push({ kind: EntKind.Haunt, x, y, hp: 5, cd: 0, timer: 0, flash: -99, tx: -1, ty: -1, path: null, pi: 0, pg: -1 });
+  occ[y * W + x] = 1;
+}
+function spawnGhast(w, x, y) {
+  w.ents.push({ kind: EntKind.Ghast, x, y, hp: 8, cd: 0, timer: 0, flash: -99, tx: -1, ty: -1, path: null, pi: 0, pg: -1 });
+  occ[y * W + x] = 1;
+}
+function grounded(w, x, y) {
+  for (let dy = -1; dy <= 1; dy++)
+    for (let dx = -1; dx <= 1; dx++) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
+      const j = ny * W + nx;
+      if (w.mat[j] === Mat.Machine && w.machine[j] === Machine.Light) return true;
+    }
+  return false;
+}
+function spectralHit(w, t, dmg, rnd2) {
+  t.flash = w.tick;
+  if (grounded(w, t.x, t.y)) {
+    t.hp -= dmg;
+    return;
+  }
+  const phase = t.kind === EntKind.Ashen ? 0.95 : 0.9;
+  if (rnd2() < phase) return;
+  t.hp -= t.kind === EntKind.Haunt ? 1 : dmg;
+}
+function ectoSplat(w, x, y) {
+  for (const [dx, dy] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]]) {
+    const j = (y + dy) * W + x + dx;
+    if (j >= 0 && j < N && w.mat[j] !== Mat.Space) w.ecto[j] = Math.min(1, w.ecto[j] + (dx === 0 && dy === 0 ? 0.8 : 0.35));
+  }
+}
+const isLiving = (o) => !isDrowned(o) && o.kind !== EntKind.Egg;
+function stepHaunt(w, e, rnd2) {
+  const prey = nearestEnt(w, e, isLiving, 1);
+  if (prey && w.tick >= e.timer) {
+    e.timer = w.tick + 40;
+    e.flash = w.tick;
+    if (rnd2() < 0.33) {
+      prey.e.hp -= 1;
+      prey.e.flash = w.tick;
+    }
+    return;
+  }
+  const here = e.y * W + e.x;
+  const arrived = e.tx !== void 0 && e.tx >= 0 && Math.abs(e.tx - e.x) + Math.abs(e.ty - e.y) <= 1;
+  if (e.tx === void 0 || e.tx < 0 || arrived || w.stain[e.ty * W + e.tx] < SCAR) {
+    let best = -1;
+    for (let a = 0; a < 50; a++) {
+      const i = rnd2() * N | 0;
+      if (w.stain[i] < SCAR || !entPass(w.mat[i])) continue;
+      const d = Math.abs(i % W - e.x) + Math.abs((i / W | 0) - e.y);
+      if (d > 15) {
+        best = i;
+        break;
+      }
+      if (best < 0) best = i;
+    }
+    if (best >= 0 && best !== here) {
+      e.tx = best % W;
+      e.ty = best / W | 0;
+    } else {
+      if (rnd2() < 0.3) wander(w, e, rnd2);
+      return;
+    }
+  }
+  moveAlongPath(w, e, e.tx, e.ty, rnd2);
+}
+function stepGhast(w, e, rnd2) {
+  const here = e.y * W + e.x;
+  if (w.ecto[here] > 0.45) {
+    becomeAshen(w, e);
+    return;
+  }
+  const intruder = nearestEnt(w, e, (o) => isLiving(o) && w.stain[o.y * W + o.x] >= SCAR, 9);
+  if (intruder) {
+    if (intruder.d <= 1) {
+      if (w.tick >= e.timer) {
+        e.timer = w.tick + 18;
+        e.flash = w.tick;
+        intruder.e.hp -= 3;
+        intruder.e.flash = w.tick;
+      }
+      return;
+    }
+    scarStep(w, e, intruder.e.x, intruder.e.y);
+    return;
+  }
+  if (rnd2() < 0.5) scarStep(w, e, e.x + (rnd2() * 7 | 0) - 3, e.y + (rnd2() * 7 | 0) - 3);
+}
+function scarStep(w, e, gx, gy, rnd2) {
+  const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+  dirs.sort((a, b) => Math.abs(gx - (e.x + a[0])) + Math.abs(gy - (e.y + a[1])) - (Math.abs(gx - (e.x + b[0])) + Math.abs(gy - (e.y + b[1]))));
+  for (const [dx, dy] of dirs) {
+    const nx = e.x + dx;
+    const ny = e.y + dy;
+    if (nx < 1 || nx >= W - 1 || ny < 1 || ny >= H - 1) continue;
+    const j = ny * W + nx;
+    if (w.stain[j] < SCAR) continue;
+    if (!entPass(w.mat[j]) || occ[j]) continue;
+    occ[e.y * W + e.x] = 0;
+    e.x = nx;
+    e.y = ny;
+    occ[j] = 1;
+    return;
+  }
+}
+function becomeAshen(w, e, rnd2) {
+  e.kind = EntKind.Ashen;
+  e.hp = 20;
+  e.burstT = w.tick + 90;
+  for (let dy = -2; dy <= 2; dy++)
+    for (let dx = -2; dx <= 2; dx++) {
+      const j = (e.y + dy) * W + e.x + dx;
+      if (j >= 0 && j < N) w.ecto[j] = 0;
+    }
+  w.pushNews("the scar exhales — an ASHEN rises to keep the tomb");
+  if (w.reactorAlive && countKind(w, EntKind.Reaver) === 0) {
+    const p = w.periReactor.find((i) => entPass(w.mat[i]) && !occ[i]);
+    if (p !== void 0) {
+      spawnReaver(w, p % W, p / W | 0, w.brainId);
+      w.pushNews(`the vault answers — ${brainName(w.brainId)} looses its REAVER`);
+    }
+  }
+}
+function stepAshen(w, e, rnd2) {
+  if ((e.burstT ?? 0) <= w.tick) {
+    const h = nearestEnt(w, e, (o) => o.kind === EntKind.Haunt, 12);
+    if (h) {
+      darkburst(w, h.e);
+      e.burstT = w.tick + 90;
+      return;
+    }
+  }
+  const prey = nearestEnt(w, e, isLiving, 20);
+  if (prey) {
+    if (prey.d <= 1) {
+      if (w.tick >= e.timer) {
+        e.timer = w.tick + 12;
+        e.flash = w.tick;
+        prey.e.hp -= 10;
+        prey.e.flash = w.tick;
+        if (prey.e.hp <= 0) {
+          prey.e.departed = true;
+          spawnHauntNear(w, prey.e.x, prey.e.y);
+        }
+      }
+      return;
+    }
+    duskStep(w, e, prey.e.x, prey.e.y);
+    return;
+  }
+  if (rnd2() < 0.4) duskStep(w, e, e.x + (rnd2() * 9 | 0) - 4, e.y + (rnd2() * 9 | 0) - 4);
+}
+function spawnHauntNear(w, x, y) {
+  for (const [dx, dy] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]]) {
+    const nx = x + dx;
+    const ny = y + dy;
+    if (nx < 1 || nx >= W - 1 || ny < 1 || ny >= H - 1) continue;
+    if (!entPass(w.mat[ny * W + nx]) || occ[ny * W + nx]) continue;
+    spawnHaunt(w, nx, ny);
+    return;
+  }
+}
+function duskStep(w, e, gx, gy, rnd2) {
+  const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+  dirs.sort((a, b) => Math.abs(gx - (e.x + a[0])) + Math.abs(gy - (e.y + a[1])) - (Math.abs(gx - (e.x + b[0])) + Math.abs(gy - (e.y + b[1]))));
+  for (const [dx, dy] of dirs) {
+    const nx = e.x + dx;
+    const ny = e.y + dy;
+    if (nx < 1 || nx >= W - 1 || ny < 1 || ny >= H - 1) continue;
+    const j = ny * W + nx;
+    if (!entPass(w.mat[j]) || occ[j]) continue;
+    if (grounded(w, nx, ny)) continue;
+    occ[e.y * W + e.x] = 0;
+    e.x = nx;
+    e.y = ny;
+    occ[j] = 1;
+    return;
+  }
+}
+function darkburst(w, haunt, rnd2) {
+  const cx = haunt.x;
+  const cy = haunt.y;
+  haunt.hp = 0;
+  w.pushNews("DARKBURST — the tomb speaks in blue fire");
+  for (let dy = -5; dy <= 5; dy++)
+    for (let dx = -5; dx <= 5; dx++) {
+      const d = Math.sqrt(dx * dx + dy * dy);
+      if (d > 5) continue;
+      const nx = cx + dx;
+      const ny = cy + dy;
+      if (nx < 1 || nx >= W - 1 || ny < 1 || ny >= H - 1) continue;
+      if (!hasLOS(w, cx, cy, nx, ny)) continue;
+      const j = ny * W + nx;
+      if (w.mat[j] !== Mat.Space) w.bursts.push({ i: j, amp: 1 - d / 5.5, t: w.tick });
+      if (w.mat[j] === Mat.Machine && w.machine[j] === Machine.Light) {
+        w.mat[j] = Mat.Floor;
+        w.machine[j] = 0;
+        w.networksDirty = true;
+        w.destruction += 1;
+      }
+    }
+  for (const o of w.ents) {
+    if (o.hp <= 0 || isDrowned(o)) continue;
+    const d = Math.abs(o.x - cx) + Math.abs(o.y - cy);
+    if (d > 5 || !hasLOS(w, cx, cy, o.x, o.y)) continue;
+    o.hp -= Math.round(20 * Math.max(0, 1 - d / 5.5));
+    o.flash = w.tick;
+  }
+}
+function drownedPulse(w, rnd2) {
+  if (w.calmTicks < -1e8) return;
+  if (w.tick % 600 === 300) {
+    if (countKind(w, EntKind.Haunt) < 4) {
+      for (let a = 0; a < 60; a++) {
+        const i = rnd2() * N | 0;
+        if (w.stain[i] < 0.3 || !entPass(w.mat[i]) || occ[i]) continue;
+        if (rnd2() < 0.25) {
+          spawnHaunt(w, i % W, i / W | 0);
+          w.pushNews("something remembers dying here — a HAUNT drifts the deck");
+        }
+        break;
+      }
+    }
+  }
+  if (w.tick % 900 === 450 && countKind(w, EntKind.Ghast) < 2) {
+    let start = -1;
+    for (let a = 0; a < 25 && start < 0; a++) {
+      const i = rnd2() * N | 0;
+      if (w.stain[i] >= SCAR && entPass(w.mat[i]) && !occ[i]) start = i;
+    }
+    if (start < 0) return;
+    const seen = /* @__PURE__ */ new Set([start]);
+    const q = [start];
+    for (let qi = 0; qi < q.length && seen.size <= 80; qi++) {
+      for (const j of [q[qi] - 1, q[qi] + 1, q[qi] - W, q[qi] + W]) {
+        if (j < 0 || j >= N || seen.has(j) || w.stain[j] < SCAR) continue;
+        seen.add(j);
+        q.push(j);
+      }
+    }
+    if (seen.size >= 55) {
+      spawnGhast(w, start % W, start / W | 0);
+      w.pushNews("the scar opens its eyes — a GHAST keeps the ground");
+    }
+  }
+}
 function spawnBreacher(w, x, y, cls = 0) {
   w.ents.push({
     kind: EntKind.Breacher,
@@ -2001,8 +2385,11 @@ function fireGout(w, sx, sy, tx, ty, rnd2, hits, dmg = 3) {
     }
     for (const o of w.ents) {
       if (o.hp <= 0 || o.x !== x || o.y !== y || !hits(o)) continue;
-      o.hp -= dmg;
-      o.flash = w.tick;
+      if (isDrowned(o)) spectralHit(w, o, dmg, rnd2);
+      else {
+        o.hp -= dmg;
+        o.flash = w.tick;
+      }
       if (o.kind === EntKind.Brood) alarmHive(w, o.x, o.y);
     }
   }
@@ -2056,8 +2443,11 @@ function stepBreacher(w, e, rnd2) {
         if (target.d <= 3) acc = 0.68;
         else if (target.e.kind === EntKind.Roamer && isDark(w, target.e.y * W + target.e.x)) acc *= 0.8;
         if (rnd2() < acc) {
-          target.e.hp -= braced ? 4 : 2;
-          target.e.flash = w.tick;
+          if (isDrowned(target.e)) spectralHit(w, target.e, braced ? 4 : 2, rnd2);
+          else {
+            target.e.hp -= braced ? 4 : 2;
+            target.e.flash = w.tick;
+          }
           if (target.e.kind === EntKind.Brood) alarmHive(w, target.e.x, target.e.y);
         } else if (cls === 0) {
           const sx = target.e.x + (rnd2() * 5 | 0) - 2;
@@ -3172,7 +3562,7 @@ function stepMilitor(w, e, rnd2) {
       break;
     }
   }
-  const foe = nearestEnt(w, e, isXeno, 14) ?? nearestEnt(w, e, isThief, 10);
+  const foe = nearestEnt(w, e, isXeno, 14) ?? nearestEnt(w, e, isThief, 10) ?? nearestEnt(w, e, isDrowned, 10);
   if (foe) {
     const rc = w.reactorCells.length ? w.reactorCells[0] : -1;
     const nearWorks = rc >= 0 && Math.abs(foe.e.x - rc % W) + Math.abs(foe.e.y - (rc / W | 0)) <= 24;
@@ -3238,8 +3628,11 @@ function stepMilitor(w, e, rnd2) {
           if (dd < reach2) reach2 = dd;
         }
       if (reach2 <= (big ? 1 : 2) && w.tick >= e.timer) {
-        foe.e.hp -= 2;
-        foe.e.flash = w.tick;
+        if (isDrowned(foe.e)) spectralHit(w, foe.e, 2, rnd2);
+        else {
+          foe.e.hp -= 2;
+          foe.e.flash = w.tick;
+        }
         e.flash = w.tick;
         e.timer = w.tick + 8;
         if (foe.e.kind === EntKind.Brood) alarmHive(w, foe.e.x, foe.e.y);
@@ -3752,119 +4145,6 @@ function moundPulse(w, rnd2) {
     spawnMound(w, bestI % W, bestI / W | 0);
   }
 }
-const isPrey = (o) => FACTION[o.kind] === 0;
-function spawnReaver(w, x, y, brain) {
-  w.ents.push({ kind: EntKind.Reaver, x, y, hp: 280, cd: 0, timer: 0, flash: -99, brain });
-  occ[y * W + x] = 1;
-}
-function stepReaver(w, e, rnd2) {
-  const prey = nearestEnt(w, e, isPrey, 24);
-  if (!prey) {
-    if (countKind(w, EntKind.Roamer) >= 10) {
-      let far = null;
-      let fd = Infinity;
-      for (const o of w.ents) {
-        if (!isPrey(o) || o.hp <= 0) continue;
-        const d = Math.abs(o.x - e.x) + Math.abs(o.y - e.y);
-        if (d < fd) {
-          fd = d;
-          far = o;
-        }
-      }
-      if (far) {
-        moveAlongPath(w, e, far.x, far.y, rnd2);
-        return;
-      }
-    }
-    if (countKind(w, EntKind.Roamer) < 10) {
-      if (w.reactorCells.length) {
-        const rc = w.reactorCells[0];
-        const rx = rc % W;
-        const ry = rc / W | 0;
-        if (Math.abs(e.x - rx) + Math.abs(e.y - ry) <= 3) {
-          w.pushNews("the hunt is done — the vault seals");
-          e.hp = 0;
-          e.departed = true;
-          return;
-        }
-        moveAlongPath(w, e, rx, ry, rnd2);
-        return;
-      }
-      if (rnd2() < 0.02) {
-        e.hp = 0;
-        e.departed = true;
-        return;
-      }
-    }
-    if (rnd2() < 0.5) wander(w, e, rnd2);
-    return;
-  }
-  if (w.tick >= (e.workT ?? 0)) {
-    let fired = 0;
-    for (const o of w.ents) {
-      if (fired >= 2) break;
-      if (!isPrey(o) || o.hp <= 0) continue;
-      const d = Math.abs(o.x - e.x) + Math.abs(o.y - e.y);
-      if (d < 2 || d > 3) continue;
-      fireGout(w, e.x, e.y, o.x, o.y, rnd2, isPrey, 3);
-      fired++;
-    }
-    if (fired > 0) {
-      e.flash = w.tick;
-      e.workT = w.tick + 18;
-    }
-  }
-  let swung = false;
-  if (w.tick >= e.timer) {
-    for (const o of w.ents) {
-      if (!isPrey(o) || o.hp <= 0) continue;
-      if (Math.abs(o.x - e.x) + Math.abs(o.y - e.y) <= 1) {
-        o.hp -= 6;
-        o.flash = w.tick;
-        if (o.kind === EntKind.Brood) alarmHive(w, o.x, o.y);
-        if (o.hp <= 0) splatter(w, o);
-        swung = true;
-      }
-    }
-    if (swung) {
-      e.flash = w.tick;
-      e.timer = w.tick + 10;
-    }
-  }
-  if (swung) {
-    let packX = 0;
-    let packY = 0;
-    let packN = 0;
-    for (const o of w.ents) {
-      if (!isPrey(o) || o.hp <= 0) continue;
-      if (Math.abs(o.x - e.x) + Math.abs(o.y - e.y) <= 2) {
-        packX += o.x;
-        packY += o.y;
-        packN++;
-      }
-    }
-    if (packN >= 3) {
-      moveToward(w, e, e.x * 2 - Math.round(packX / packN), e.y * 2 - Math.round(packY / packN), rnd2);
-    }
-    return;
-  }
-  if (prey.d > 1) moveAlongPath(w, e, prey.e.x, prey.e.y, rnd2);
-}
-function reaverPulse(w, rnd2) {
-  if (w.tick % 900 !== 0) return;
-  if (!w.reactorAlive || !w.reactorCells.length) return;
-  const roamers = countKind(w, EntKind.Roamer);
-  const reavers = countKind(w, EntKind.Reaver);
-  if (roamers >= 50 && reavers === 0 && rnd2() < 0.6) {
-    for (const j of w.periReactor) {
-      if (j >= 0 && j < N && entPass(w.mat[j]) && !occ[j]) {
-        w.pushNews("THE VAULT OPENS — a reaver walks");
-        spawnReaver(w, j % W, j / W | 0, w.brainId);
-        return;
-      }
-    }
-  }
-}
 let headlessTicks = 0;
 function resetEntityState() {
   resetKernel();
@@ -3896,6 +4176,7 @@ function stepEntities(w, rnd2) {
     }
   }
   if (w.shots.length) w.shots = w.shots.filter((sh) => w.tick - sh.t < 9);
+  if (w.bursts.length) w.bursts = w.bursts.filter((b) => w.tick - b.t < 30);
   const chaosNow = w.burningCells * 2 + Math.sqrt(w.ventedThisTick) * 12 + Math.sqrt(w.leakingCells) * 5 + w.destruction * 1.5 + (w.melted ? 150 : 0);
   if (chaosNow < TUNE.chaosNotch) w.calmTicks++;
   else w.calmTicks = 0;
@@ -4007,6 +4288,7 @@ function stepEntities(w, rnd2) {
   moundPulse(w, rnd2);
   reaverPulse(w, rnd2);
   if (w.tick % 1500 === 750) wakeDormantHearts(w);
+  drownedPulse(w, rnd2);
   if (!w.reactorAlive || w.reactorCells.length === 0) {
     headlessTicks++;
     if (headlessTicks > 4e3 && headlessTicks % 2e3 === 0) {
@@ -4100,6 +4382,10 @@ function stepEntities(w, rnd2) {
   if (w.ents.some((e) => e.hp <= 0)) {
     for (const e of w.ents) {
       if (e.hp <= 0) {
+        if (FACTION[e.kind] === 6) {
+          ectoSplat(w, e.x, e.y);
+          continue;
+        }
         splatter(w, e);
         if ((e.kind === EntKind.Servitor || e.kind === EntKind.Militor) && e.departed !== true) {
           w.servitorDebt += 2;
@@ -4125,7 +4411,7 @@ function stepOne(w, e, rnd2) {
   if (e.kind === EntKind.Servitor || e.kind === EntKind.Militor) {
     if (w.burn[ci] > 0 || w.temp[ci] > 520) e.hp -= 1;
     if (e.hp <= 0) return;
-  } else if (w.burn[ci] > 0 || w.temp[ci] > 240) {
+  } else if ((w.burn[ci] > 0 || w.temp[ci] > 240) && FACTION[e.kind] !== 6) {
     e.hp -= FACTION[e.kind] === 0 ? 3 : 2;
     if (e.kind === EntKind.Brood) alarmHive(w, e.x, e.y);
     if (e.hp <= 0) return;
@@ -4134,7 +4420,7 @@ function stepOne(w, e, rnd2) {
     e.cd += 4;
   }
   const painT = e.kind === EntKind.Servitor || e.kind === EntKind.Militor ? 520 : 240;
-  if ((w.burn[ci] > 0 || w.temp[ci] > painT) && e.kind !== EntKind.Egg && e.kind !== EntKind.Brood) {
+  if ((w.burn[ci] > 0 || w.temp[ci] > painT) && e.kind !== EntKind.Egg && e.kind !== EntKind.Brood && FACTION[e.kind] !== 6) {
     let bdx = 0;
     let bdy = 0;
     let bt = Infinity;
@@ -4220,6 +4506,15 @@ function stepOne(w, e, rnd2) {
     case EntKind.Militor:
       stepMilitor(w, e, rnd2);
       break;
+    case EntKind.Haunt:
+      stepHaunt(w, e, rnd2);
+      break;
+    case EntKind.Ghast:
+      stepGhast(w, e, rnd2);
+      break;
+    case EntKind.Ashen:
+      stepAshen(w, e, rnd2);
+      break;
   }
 }
 function describeTask(w, e) {
@@ -4228,6 +4523,12 @@ function describeTask(w, e) {
       return e.hp < 20 ? "BLIND RAGE — the green remembers" : "standing guard over the grove";
     case EntKind.Shrub:
       return "gardening, slowly";
+    case EntKind.Haunt:
+      return "lingering — it remembers dying here";
+    case EntKind.Ghast:
+      return "keeping the scar";
+    case EntKind.Ashen:
+      return "keeping the tomb";
     case EntKind.Reaver: {
       const prey2 = nearestEnt(w, e, (o) => FACTION[o.kind] === 0, 24);
       if (prey2) return "reaping the swarm";
@@ -4343,6 +4644,8 @@ const ENTS = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty
   spawnBreacher,
   spawnBrood,
   spawnEgg,
+  spawnGhast,
+  spawnHaunt,
   spawnMilitor,
   spawnMound,
   spawnReaver,
@@ -5098,6 +5401,7 @@ function simTick(w, rnd2) {
   stepBotany(w, rnd2);
   stepBridgeGlow(w);
   stepCondGlow(w);
+  stepDarkGlow(w);
   stepLeaks(w);
   stepGas(w);
   stepSmoke(w);
@@ -5685,6 +5989,25 @@ function stampFireGlow(w, x, y) {
     }
   }
 }
+function stepDarkGlow(w) {
+  w.darkGlow.fill(0);
+  for (const e of w.ents) {
+    if (e.hp <= 0 || e.kind !== EntKind.Ghast && e.kind !== EntKind.Ashen) continue;
+    for (let gy = -5; gy <= 5; gy++) {
+      const ay = e.y + gy;
+      if (ay < 0 || ay >= H) continue;
+      for (let gx = -5; gx <= 5; gx++) {
+        const ax = e.x + gx;
+        if (ax < 0 || ax >= W) continue;
+        const d = Math.sqrt(gx * gx + gy * gy);
+        if (d > 5.5) continue;
+        const gl = Math.max(0, 1 - d / 5.5);
+        const j2 = ay * W + ax;
+        if (gl > w.darkGlow[j2]) w.darkGlow[j2] = gl;
+      }
+    }
+  }
+}
 function stepCondGlow(w) {
   w.condGlow.fill(0);
   for (const e of w.ents) {
@@ -6058,8 +6381,14 @@ const SPR = {
   [EntKind.Militor]: [1, 3, 1, 1, 3, 1, 1, 2, 1],
   [EntKind.Mound]: [2, 1, 2, 1, 3, 1, 1, 1, 1],
   [EntKind.Shrub]: [0, 1, 0, 1, 3, 1, 0, 2, 0],
-  [EntKind.Reaver]: [1, 1, 1, 1, 3, 1, 1, 2, 1]
+  [EntKind.Reaver]: [1, 1, 1, 1, 3, 1, 1, 2, 1],
   // full red bulk, white eye, black maw
+  [EntKind.Haunt]: [1, 1, 1, 2, 1, 2, 1, 2, 1],
+  // a skull, if you squint. You will squint.
+  [EntKind.Ghast]: [1, 1, 1, 2, 1, 2, 1, 2, 1],
+  // the same face, greyer, older
+  [EntKind.Ashen]: [1, 1, 1, 3, 1, 3, 1, 2, 1]
+  // black bulk, two ember eyes
 };
 const MATRIARCH_SPR = [1, 1, 1, 2, 3, 2, 1, 1, 1];
 const MATRIARCH_PAL = [[88, 48, 132], [14, 16, 20], [186, 130, 255]];
@@ -6084,8 +6413,14 @@ const PAL = {
   // walking grove
   [EntKind.Shrub]: [[64, 122, 52], [38, 76, 36], [150, 210, 100]],
   // pot-sized wanderer
-  [EntKind.Reaver]: [[150, 34, 48], [14, 16, 20], [238, 226, 210]]
+  [EntKind.Reaver]: [[150, 34, 48], [14, 16, 20], [238, 226, 210]],
   // arterial red, black maw, bone-white eye
+  [EntKind.Haunt]: [[232, 238, 244], [10, 12, 16], [232, 238, 244]],
+  // bone white on nothing
+  [EntKind.Ghast]: [[148, 154, 162], [10, 12, 16], [148, 154, 162]],
+  // grave grey
+  [EntKind.Ashen]: [[54, 56, 62], [100, 102, 110], [235, 60, 45]]
+  // charcoal bulk, ash chin, red eyes
 };
 const BADGE = [
   [92, 168, 255],
@@ -6196,7 +6531,13 @@ function render(w) {
         continue;
       }
       const rid = roomId[i];
-      const lc0 = Math.max(w.lightLevel[i], w.fireGlow[i], w.bridgeGlow[i], w.condGlow[i]);
+      let lc0 = Math.max(w.lightLevel[i], w.fireGlow[i], w.bridgeGlow[i], w.condGlow[i]);
+      {
+        const dg = w.darkGlow[i];
+        if (dg > 0.02 && !(w.mat[i] === Mat.Machine && w.machine[i] === Machine.Light)) {
+          lc0 = Math.max(lc0 * (1 - 0.8 * (dg > 1 ? 1 : dg)), w.bridgeGlow[i], w.condGlow[i]);
+        }
+      }
       const lc = lc0 > 1 ? 1 : lc0;
       let light = 0.2 + 0.8 * lc * lc * (3 - 2 * lc) * (0.4 + 0.6 * lc);
       let r = 0, g = 0, b = 0;
@@ -6415,6 +6756,14 @@ function render(w) {
         g += (18 - g) * t;
         b += (16 - b) * t;
       }
+      const ec = w.ecto[i];
+      if (ec > 0.04) {
+        const t2 = Math.min(0.4, ec * 0.45);
+        const sh2 = 0.85 + 0.15 * Math.sin(tick * 0.02 + i);
+        r += (110 - r) * t2 * 0.4;
+        g += (232 - g) * t2 * 0.55 * sh2;
+        b += (205 - b) * t2 * 0.6 * sh2;
+      }
       if (m === Mat.Floor || m === Mat.Rubble || m === Mat.DoorOpen) {
         const a = w.air[i];
         if (a < 0.35) {
@@ -6574,6 +6923,9 @@ function render(w) {
     const eI = e.y * W + e.x;
     const eLc = Math.max(w.lightLevel[eI], w.fireGlow[eI], w.bridgeGlow[eI], w.condGlow[eI]);
     let glow = 0.35 + 0.65 * (eLc > 1 ? 1 : eLc);
+    if (e.kind === EntKind.Haunt || e.kind === EntKind.Ghast || e.kind === EntKind.Ashen) {
+      glow = Math.max(glow, 0.85);
+    }
     let pal = PAL[e.kind];
     let spr = SPR[e.kind];
     if (e.kind === EntKind.Egg) {
@@ -6607,6 +6959,24 @@ function render(w) {
       if (bx >= 0 && bx < PW && by >= 0 && by < PH) px[by * PW + bx] = pack(c[0], c[1], c[2]);
     }
   }
+  for (const bu of w.bursts) {
+    const age = (tick - bu.t) / 30;
+    if (age > 1) continue;
+    const d = (1 - bu.amp) * 5.5;
+    const ring = age * 6.5;
+    if (d > ring || d < ring - 2.2) continue;
+    const bright = bu.amp * (1 - age * 0.7);
+    if (bright < 0.05) continue;
+    const bx2 = bu.i % W;
+    const by2 = bu.i / W | 0;
+    for (let k = 0; k < 2; k++) {
+      const sx = bx2 * RS + (hash(bx2 + k, by2, tick >> 1) * RS | 0);
+      const sy = by2 * RS + (hash(by2, bx2 + k, tick >> 1) * RS | 0);
+      const pi2 = sy * PW + sx;
+      if (pi2 < 0 || pi2 >= px.length) continue;
+      px[pi2] = pack(30 + 80 * bright | 0, 70 + 110 * bright | 0, 140 + 100 * bright | 0);
+    }
+  }
   for (const sh of w.shots) {
     const age = (tick - sh.t) / 8;
     if (age < 0 || age > 1) continue;
@@ -6620,7 +6990,7 @@ function render(w) {
         const fi = (fy | 0) * PW + (fx | 0);
         if (fi < 0 || fi >= px.length) continue;
         const hot = hash(k, sh.t, tick);
-        px[fi] = hot < 0.4 ? pack(255, 46, 20) : hot < 0.8 ? pack(255, 140, 30) : pack(255, 220, 120);
+        px[fi] = sh.k === 2 ? hot < 0.4 ? pack(60, 120, 255) : hot < 0.8 ? pack(120, 190, 255) : pack(220, 240, 255) : hot < 0.4 ? pack(255, 46, 20) : hot < 0.8 ? pack(255, 140, 30) : pack(255, 220, 120);
       }
     }
   }
@@ -6884,6 +7254,14 @@ function paintAt(x, y) {
       walkable();
       entsMod.spawnReaver(w, x, y, world.brainId);
       break;
+    case "haunt":
+      walkable();
+      entsMod.spawnHaunt(w, x, y);
+      break;
+    case "ghast":
+      walkable();
+      entsMod.spawnGhast(w, x, y);
+      break;
     case "resin":
       w.mat[i] = Mat.Growth;
       w.solidFuel[i] = 0;
@@ -7035,6 +7413,9 @@ function paintLegend() {
   paint2("sw-mound", 3, SPR[EntKind.Mound], PAL[EntKind.Mound]);
   paint2("sw-shrub", 3, SPR[EntKind.Shrub], PAL[EntKind.Shrub]);
   paint2("sw-reaver", 3, SPR[EntKind.Reaver], PAL[EntKind.Reaver]);
+  paint2("sw-haunt", 3, SPR[EntKind.Haunt], PAL[EntKind.Haunt]);
+  paint2("sw-ghast", 3, SPR[EntKind.Ghast], PAL[EntKind.Ghast]);
+  paint2("sw-ashen", 3, SPR[EntKind.Ashen], PAL[EntKind.Ashen]);
   paint2("sw-crewbadge", 3, SPR[EntKind.Servitor], PAL[EntKind.Servitor]);
   paint2("sw-dynbadge", 3, SPR[EntKind.Roamer], PAL[EntKind.Roamer]);
   const gCrew = (_a = document.getElementById("sw-crewbadge")) == null ? void 0 : _a.getContext("2d");
@@ -7210,7 +7591,7 @@ function updateHud(w) {
 const elInspect = document.getElementById("inspect");
 const MAT_NAMES = ["SPACE", "HULL", "WALL", "DECK", "DOOR (SEALED)", "DOOR (OPEN)", "MACHINE", "RUBBLE", "RESIN", "LATTICE", "TREE", "VINE"];
 const MACHINE_NAMES = ["", "REACTOR", "FUEL TANK", "COOLANT TANK", "O2 GENERATOR", "MUNITIONS", "LIGHT", "AIR VENT"];
-const ENT_NAMES = ["BROODMOTHER", "EGG", "ROAMER", "BREACHER", "SCAVENGER", "SERVITOR", "WEAVER", "MILITOR", "SHAMBLING MOUND", "SHRUB", "REAVER"];
+const ENT_NAMES = ["BROODMOTHER", "EGG", "ROAMER", "BREACHER", "SCAVENGER", "SERVITOR", "WEAVER", "MILITOR", "SHAMBLING MOUND", "SHRUB", "REAVER", "HAUNT", "GHAST", "ASHEN"];
 const LIQ_NAMES = ["", "FUEL", "COOLANT", "ICHOR", "BLOOD"];
 function esc(t) {
   return t.replace(/&/g, "&amp;").replace(/</g, "&lt;");
