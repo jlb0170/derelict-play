@@ -203,6 +203,10 @@ class World {
     __publicField(this, "shots", []);
     __publicField(this, "bursts", []);
     // darkburst wavefront cells, amp = radius falloff
+    __publicField(this, "rites", []);
+    // blood spiraling inward: a drowned birth in progress
+    __publicField(this, "lampDim", /* @__PURE__ */ new Map());
+    // per-lamp snuff progress 0..1 — haunts drink, lamps recover
     __publicField(this, "fuelReserve", 6e3);
     __publicField(this, "coolantReserve", 3e3);
     __publicField(this, "coolantTankCells", 0);
@@ -2085,19 +2089,63 @@ function stepHaunt(w, e, rnd2) {
     }
     return;
   }
+  for (let dy = -1; dy <= 1; dy++)
+    for (let dx = -1; dx <= 1; dx++) {
+      const j = (e.y + dy) * W + e.x + dx;
+      if (j < 0 || j >= N) continue;
+      if (w.mat[j] !== Mat.Machine || w.machine[j] !== Machine.Light) continue;
+      if (w.lightLevel[j] <= 0.05 && (w.lampDim.get(j) ?? 0) <= 0) continue;
+      const v = (w.lampDim.get(j) ?? 0) + 10 / 90;
+      e.flash = w.tick;
+      if (v >= 1) {
+        w.lampDim.delete(j);
+        snuffOut(w, j);
+      } else {
+        w.lampDim.set(j, v);
+        w.networksDirty = true;
+      }
+      return;
+    }
+  {
+    let lamp = -1;
+    let ld = Infinity;
+    for (let dy = -8; dy <= 8; dy++)
+      for (let dx = -8; dx <= 8; dx++) {
+        const j = (e.y + dy) * W + e.x + dx;
+        if (j < 0 || j >= N) continue;
+        if (w.mat[j] !== Mat.Machine || w.machine[j] !== Machine.Light) continue;
+        if (w.lightLevel[j] <= 0.05) continue;
+        const dd = Math.abs(dx) + Math.abs(dy);
+        if (dd < ld) {
+          ld = dd;
+          lamp = j;
+        }
+      }
+    if (lamp >= 0) {
+      for (const off2 of [1, -1, W, -W]) {
+        const nb = lamp + off2;
+        if (nb >= 0 && nb < N && entPass(w.mat[nb])) {
+          moveAlongPath(w, e, nb % W, nb / W | 0, rnd2);
+          return;
+        }
+      }
+    }
+  }
   const here = e.y * W + e.x;
   const arrived = e.tx !== void 0 && e.tx >= 0 && Math.abs(e.tx - e.x) + Math.abs(e.ty - e.y) <= 1;
   if (e.tx === void 0 || e.tx < 0 || arrived || w.stain[e.ty * W + e.tx] < SCAR) {
     let best = -1;
-    for (let a = 0; a < 50; a++) {
-      const i = rnd2() * N | 0;
+    for (let a = 0; a < 30; a++) {
+      const dx = (rnd2() * 11 | 0) - 5;
+      const dy = (rnd2() * 11 | 0) - 5;
+      if (Math.abs(dx) + Math.abs(dy) < 2) continue;
+      const nx = e.x + dx;
+      const ny = e.y + dy;
+      if (nx < 1 || nx >= W - 1 || ny < 1 || ny >= H - 1) continue;
+      const i = ny * W + nx;
       if (w.stain[i] < SCAR || !entPass(w.mat[i])) continue;
-      const d = Math.abs(i % W - e.x) + Math.abs((i / W | 0) - e.y);
-      if (d > 15) {
-        best = i;
-        break;
-      }
-      if (best < 0) best = i;
+      best = i;
+      break;
     }
     if (best >= 0 && best !== here) {
       e.tx = best % W;
@@ -2109,10 +2157,66 @@ function stepHaunt(w, e, rnd2) {
   }
   moveAlongPath(w, e, e.tx, e.ty, rnd2);
 }
+function snuffOut(w, lamp, rnd2) {
+  const cx = lamp % W;
+  const cy = lamp / W | 0;
+  w.mat[lamp] = Mat.Floor;
+  w.machine[lamp] = 0;
+  w.networksDirty = true;
+  w.destruction += 1;
+  w.pushNews("a lamp is drunk to NOTHING — the dark takes the room back");
+  for (let dy = -2; dy <= 2; dy++)
+    for (let dx = -2; dx <= 2; dx++) {
+      const dd = Math.sqrt(dx * dx + dy * dy);
+      if (dd > 2) continue;
+      const nx = cx + dx;
+      const ny = cy + dy;
+      if (nx < 1 || nx >= W - 1 || ny < 1 || ny >= H - 1) continue;
+      if (!hasLOS(w, cx, cy, nx, ny)) continue;
+      const j = ny * W + nx;
+      if (w.mat[j] !== Mat.Space) w.bursts.push({ i: j, amp: 1 - dd / 2.4, t: w.tick });
+    }
+  for (const o of w.ents) {
+    if (o.hp <= 0 || isDrowned(o)) continue;
+    const dd = Math.abs(o.x - cx) + Math.abs(o.y - cy);
+    if (dd > 2 || !hasLOS(w, cx, cy, o.x, o.y)) continue;
+    o.hp -= Math.round(5 * Math.max(0, 1 - dd / 2.5));
+    o.flash = w.tick;
+  }
+}
+function lampRecovery(w) {
+  if (w.lampDim.size === 0 || w.tick % 3 !== 0) return;
+  for (const [cell, v] of w.lampDim) {
+    if (w.mat[cell] !== Mat.Machine || w.machine[cell] !== Machine.Light) {
+      w.lampDim.delete(cell);
+      continue;
+    }
+    const cx = cell % W;
+    const cy = cell / W | 0;
+    let held = false;
+    for (const o of w.ents) {
+      if (o.hp <= 0 || o.kind !== EntKind.Haunt) continue;
+      if (Math.abs(o.x - cx) <= 1 && Math.abs(o.y - cy) <= 1) {
+        held = true;
+        break;
+      }
+    }
+    if (held) continue;
+    const nv = v - 3 / 45;
+    if (nv <= 0) w.lampDim.delete(cell);
+    else w.lampDim.set(cell, nv);
+    w.networksDirty = true;
+  }
+}
 function stepGhast(w, e, rnd2) {
+  if (e.bored && w.tick < e.bored) return;
+  if (e.bored && w.tick >= e.bored) {
+    finishAshen(w, e);
+    return;
+  }
   const here = e.y * W + e.x;
-  if (w.ecto[here] > 0.45) {
-    becomeAshen(w, e);
+  if (w.ecto[here] > 0.45 && countKind(w, EntKind.Ashen) === 0) {
+    beginRite(w, e);
     return;
   }
   const intruder = nearestEnt(w, e, (o) => isLiving(o) && w.stain[o.y * W + o.x] >= SCAR, 9);
@@ -2148,16 +2252,22 @@ function scarStep(w, e, gx, gy, rnd2) {
     return;
   }
 }
-function becomeAshen(w, e, rnd2) {
-  e.kind = EntKind.Ashen;
-  e.hp = 20;
-  e.burstT = w.tick + 90;
+function beginRite(w, e) {
+  e.bored = w.tick + 60;
+  w.rites.push({ x: e.x, y: e.y, t: w.tick });
   for (let dy = -2; dy <= 2; dy++)
     for (let dx = -2; dx <= 2; dx++) {
       const j = (e.y + dy) * W + e.x + dx;
       if (j >= 0 && j < N) w.ecto[j] = 0;
     }
-  w.pushNews("the scar exhales — an ASHEN rises to keep the tomb");
+  w.pushNews("the scar begins to KNIT — blood remembers a shape");
+}
+function finishAshen(w, e) {
+  e.kind = EntKind.Ashen;
+  e.hp = 20;
+  e.bored = 0;
+  e.burstT = w.tick + 90;
+  w.pushNews("the shape stands — an ASHEN keeps the tomb now");
   if (w.reactorAlive && countKind(w, EntKind.Reaver) === 0) {
     const p = w.periReactor.find((i) => entPass(w.mat[i]) && !occ[i]);
     if (p !== void 0) {
@@ -2166,12 +2276,51 @@ function becomeAshen(w, e, rnd2) {
     }
   }
 }
+function hauntNear(w, x, y) {
+  let best = null;
+  let bd = Infinity;
+  for (const o of w.ents) {
+    if (o.hp <= 0 || o.kind !== EntKind.Haunt) continue;
+    const dd = Math.abs(o.x - x) + Math.abs(o.y - y);
+    if (dd <= 3 && dd < bd) {
+      bd = dd;
+      best = o;
+    }
+  }
+  return best;
+}
+function burstReachesLiving(w, h) {
+  for (const o of w.ents) {
+    if (o.hp <= 0 || isDrowned(o) || o.kind === EntKind.Egg) continue;
+    const dd = Math.abs(o.x - h.x) + Math.abs(o.y - h.y);
+    if (dd <= 5 && hasLOS(w, h.x, h.y, o.x, o.y)) return true;
+  }
+  return false;
+}
 function stepAshen(w, e, rnd2) {
+  if ((e.bored ?? 0) > 0) {
+    const h = hauntNear(w, e.tx ?? e.x, e.ty ?? e.y);
+    if (!h || !hasLOS(w, e.x, e.y, h.x, h.y)) {
+      e.bored = 0;
+      e.burstT = w.tick + 45;
+    } else if (w.tick >= e.bored) {
+      e.bored = 0;
+      e.burstT = w.tick + 150;
+      darkburst(w, h);
+      return;
+    } else {
+      e.tx = h.x;
+      e.ty = h.y;
+      w.shots.push({ x0: e.x, y0: e.y, x1: h.x, y1: h.y, t: w.tick, k: 3 });
+      return;
+    }
+  }
   if ((e.burstT ?? 0) <= w.tick) {
     const h = nearestEnt(w, e, (o) => o.kind === EntKind.Haunt, 12);
-    if (h) {
-      darkburst(w, h.e);
-      e.burstT = w.tick + 90;
+    if (h && hasLOS(w, e.x, e.y, h.e.x, h.e.y) && burstReachesLiving(w, h.e)) {
+      e.bored = w.tick + 45;
+      e.tx = h.e.x;
+      e.ty = h.e.y;
       return;
     }
   }
@@ -2285,6 +2434,7 @@ function drownedPulse(w, rnd2) {
     }
     if (seen.size >= 55) {
       spawnGhast(w, start % W, start / W | 0);
+      w.rites.push({ x: start % W, y: start / W | 0, t: w.tick });
       w.pushNews("the scar opens its eyes — a GHAST keeps the ground");
     }
   }
@@ -4177,6 +4327,8 @@ function stepEntities(w, rnd2) {
   }
   if (w.shots.length) w.shots = w.shots.filter((sh) => w.tick - sh.t < 9);
   if (w.bursts.length) w.bursts = w.bursts.filter((b) => w.tick - b.t < 30);
+  if (w.rites.length) w.rites = w.rites.filter((r2) => w.tick - r2.t < 60);
+  lampRecovery(w);
   const chaosNow = w.burningCells * 2 + Math.sqrt(w.ventedThisTick) * 12 + Math.sqrt(w.leakingCells) * 5 + w.destruction * 1.5 + (w.melted ? 150 : 0);
   if (chaosNow < TUNE.chaosNotch) w.calmTicks++;
   else w.calmTicks = 0;
@@ -5502,6 +5654,9 @@ function rebuildNetworks(w) {
     const isStrand = !isFixture && w.mat[li] === Mat.Lattice && (w.pipe[li] & Pipe.Wire) !== 0 && (li % W + (li / W | 0)) % 2 === 0;
     if (!isFixture && !isStrand) continue;
     if (powered[li] === 0 || w.pipeBroken[li]) continue;
+    const dimF = isFixture ? 1 - (w.lampDim.get(li) ?? 0) : 1;
+    if (dimF <= 0.02) continue;
+    const fixR = LIGHT_R * dimF;
     lightQ[0] = li;
     lightDepth[li] = 1;
     const fx = li % W;
@@ -5513,9 +5668,9 @@ function rebuildNetworks(w) {
       const d = lightDepth[c];
       const ex = c % W - fx;
       const ey = (c / W | 0) - fy;
-      const glow = Math.max(0, 1 - Math.sqrt(ex * ex + ey * ey) / (LIGHT_R + 1));
+      const glow = Math.max(0, 1 - Math.sqrt(ex * ex + ey * ey) / (fixR + 1));
       if (glow > w.lightLevel[c]) w.lightLevel[c] = glow;
-      if (d > LIGHT_R) continue;
+      if (d > fixR) continue;
       for (const nb of [c - 1, c + 1, c - W, c + W]) {
         if (nb < 0 || nb >= N) continue;
         if (lightDepth[nb] !== 0) continue;
@@ -6759,10 +6914,13 @@ function render(w) {
       const ec = w.ecto[i];
       if (ec > 0.04) {
         const t2 = Math.min(0.4, ec * 0.45);
-        const sh2 = 0.85 + 0.15 * Math.sin(tick * 0.02 + i);
-        r += (110 - r) * t2 * 0.4;
-        g += (232 - g) * t2 * 0.55 * sh2;
-        b += (205 - b) * t2 * 0.6 * sh2;
+        const ph = (hash(x, y, 0) * 3 + tick * 0.035) % 3;
+        const er = ph < 1 ? 62 : ph < 2 ? 88 : 48;
+        const eg = ph < 1 ? 120 : ph < 2 ? 96 : 150;
+        const eb = ph < 1 ? 235 : ph < 2 ? 244 : 215;
+        r += (er - r) * t2 * 0.5;
+        g += (eg - g) * t2 * 0.5;
+        b += (eb - b) * t2 * 0.6;
       }
       if (m === Mat.Floor || m === Mat.Rubble || m === Mat.DoorOpen) {
         const a = w.air[i];
@@ -6957,6 +7115,21 @@ function render(w) {
       const bx = e.x * RS + ((e.lin - 1) % 2 === 0 ? 0 : RS - 1);
       const by = e.y * RS + 1;
       if (bx >= 0 && bx < PW && by >= 0 && by < PH) px[by * PW + bx] = pack(c[0], c[1], c[2]);
+    }
+  }
+  for (const rt of w.rites) {
+    const age = (tick - rt.t) / 60;
+    if (age > 1) continue;
+    for (let k = 0; k < 26; k++) {
+      const kh = hash(k, rt.t, 0);
+      const ang = k * 2.3999 + age * (4 + 2 * kh);
+      const rad = 5.5 * (1 - age) * (0.55 + 0.45 * kh);
+      const sx = (rt.x + 0.5 + Math.cos(ang) * rad) * RS | 0;
+      const sy = (rt.y + 0.5 + Math.sin(ang) * rad) * RS | 0;
+      const pi2 = sy * PW + sx;
+      if (sx < 0 || sx >= PW || pi2 < 0 || pi2 >= px.length) continue;
+      const hot = hash(k, rt.t, tick >> 2);
+      px[pi2] = hot < 0.5 ? pack(150, 28, 24) : hot < 0.85 ? pack(96, 16, 16) : pack(212, 62, 40);
     }
   }
   for (const bu of w.bursts) {
@@ -7944,6 +8117,21 @@ function loop() {
       ctx.fillStyle = "rgba(255, 250, 205, 1)";
       for (let h2 = 0; h2 < heads.length; h2 += 2) {
         ctx.fillRect(Math.round(heads[h2]), Math.round(heads[h2 + 1]), 1, 1);
+      }
+      for (const sh of world.shots) {
+        if (sh.k !== 3) continue;
+        const sx0 = (sh.x0 + 0.5 - viewX) * cellW;
+        const sy0 = (sh.y0 + 0.5 - viewY) * cellH;
+        const sx1 = (sh.x1 + 0.5 - viewX) * cellW;
+        const sy1 = (sh.y1 + 0.5 - viewY) * cellH;
+        ctx.strokeStyle = "rgba(46, 74, 190, 0.4)";
+        ctx.beginPath();
+        ctx.moveTo(sx0, sy0);
+        ctx.lineTo(sx1, sy1);
+        ctx.stroke();
+        const p = frame % 22 / 22;
+        ctx.fillStyle = "rgba(120, 160, 255, 0.95)";
+        ctx.fillRect(Math.round(sx0 + (sx1 - sx0) * p), Math.round(sy0 + (sy1 - sy0) * p), 1, 1);
       }
     }
     const claimA = (0.5 + 0.5 * Math.sin(frame * 0.22) ** 2).toFixed(3);
