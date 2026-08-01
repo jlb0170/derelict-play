@@ -118,7 +118,7 @@ class World {
     __publicField(this, "stain", new Float32Array(N));
     // dried blood; the deck remembers every kill
     __publicField(this, "ecto", new Float32Array(N));
-    // where a haunt unraveled — spectral residue, the ashen trigger
+    // a GHAST's death scar — the lineage a later ghast must find to rise as ashen
     __publicField(this, "rooms", []);
     __publicField(this, "reactorCells", []);
     __publicField(this, "ventCells", []);
@@ -2215,7 +2215,7 @@ function stepGhast(w, e, rnd2) {
     return;
   }
   const here = e.y * W + e.x;
-  if (w.ecto[here] > 0.45 && countKind(w, EntKind.Ashen) === 0) {
+  if (w.ecto[here] > 0.45) {
     beginRite(w, e);
     return;
   }
@@ -4535,7 +4535,7 @@ function stepEntities(w, rnd2) {
     for (const e of w.ents) {
       if (e.hp <= 0) {
         if (FACTION[e.kind] === 6) {
-          ectoSplat(w, e.x, e.y);
+          if (e.kind === EntKind.Ghast) ectoSplat(w, e.x, e.y);
           continue;
         }
         splatter(w, e);
