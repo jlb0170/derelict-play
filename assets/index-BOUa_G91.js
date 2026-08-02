@@ -7183,8 +7183,9 @@ let seed = Math.random() * 4294967295 >>> 0;
 const rnd = mulberry32(Math.random() * 4294967295 >>> 0);
 let paused = false;
 const SPEEDS = [1 / 300, 1 / 60, 1 / 12, 1 / 4, 0.5, 1, 2, 4];
-const SPEED_LABELS = ["1 tick/5s", "1 tick/s", "5 t/s", "15 t/s", "0.5×", "1×", "2×", "4×"];
-let speedIdx = 5;
+const SPEED_LABELS = ["1/150×", "1/30×", "1/6×", "1/2×", "1×", "2×", "4×", "8×"];
+const SPEED_TPS = ["0.2", "1", "5", "15", "30", "60", "120", "240"];
+let speedIdx = 4;
 let frame = 0;
 let tool = 0;
 let paint = null;
@@ -7742,6 +7743,7 @@ function updateHud(w) {
   elTick.textContent = w.tick < 1e4 ? String(w.tick) : `${(w.tick / 1e3).toFixed(w.tick < 1e5 ? 1 : 0)}k`;
   elFps.textContent = fps.toFixed(0);
   elSpeed.textContent = paused ? "paused" : SPEED_LABELS[speedIdx];
+  elSpeed.parentElement.title = `${SPEED_TPS[speedIdx]} ticks per second`;
   const latest = w.news[w.news.length - 1];
   if (latest) {
     const age = Math.max(0, (w.tick - latest.t) / 60 | 0);
