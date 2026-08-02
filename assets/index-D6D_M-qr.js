@@ -1865,7 +1865,6 @@ function stepRoamer(w, e, rnd2) {
   if (fresh) {
     if (prey && prey.d <= 1) {
       prey.e.hp -= 2;
-      e.flash = w.tick;
       prey.e.flash = w.tick;
       e.rage = true;
       e.fed = w.tick;
@@ -1919,7 +1918,6 @@ function stepRoamer(w, e, rnd2) {
   const ci = e.y * W + e.x;
   if (w.pipe[ci] !== 0 && !w.pipeBroken[ci] && rnd2() < 0.04) {
     w.breakPipe(ci);
-    e.flash = w.tick;
     e.fed = w.tick;
     if (rnd2() < 0.15) w.temp[ci] = Math.min(1500, w.temp[ci] + 460);
   }
@@ -1982,7 +1980,6 @@ function stepReaver(w, e, rnd2) {
       fired++;
     }
     if (fired > 0) {
-      e.flash = w.tick;
       e.workT = w.tick + 18;
     }
   }
@@ -2003,7 +2000,6 @@ function stepReaver(w, e, rnd2) {
       }
     }
     if (swung) {
-      e.flash = w.tick;
       e.timer = w.tick + 10;
     }
   }
@@ -2062,14 +2058,15 @@ function grounded(w, x, y) {
   return false;
 }
 function spectralHit(w, t, dmg, rnd2) {
-  t.flash = w.tick;
   if (grounded(w, t.x, t.y)) {
     t.hp -= dmg;
+    t.flash = w.tick;
     return;
   }
   const phase = t.kind === EntKind.Ashen ? 0.95 : 0.9;
   if (rnd2() < phase) return;
   t.hp -= t.kind === EntKind.Haunt ? 1 : dmg;
+  t.flash = w.tick;
 }
 function ectoSplat(w, x, y) {
   for (const [dx, dy] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]]) {
@@ -2082,7 +2079,6 @@ function stepHaunt(w, e, rnd2) {
   const prey = nearestEnt(w, e, isLiving, 1);
   if (prey && w.tick >= e.timer) {
     e.timer = w.tick + 40;
-    e.flash = w.tick;
     if (rnd2() < 0.33) {
       prey.e.hp -= 1;
       prey.e.flash = w.tick;
@@ -2096,7 +2092,6 @@ function stepHaunt(w, e, rnd2) {
       if (w.mat[j] !== Mat.Machine || w.machine[j] !== Machine.Light) continue;
       if (w.lightLevel[j] <= 0.05 && (w.lampDim.get(j) ?? 0) <= 0) continue;
       const v = (w.lampDim.get(j) ?? 0) + 10 / 90;
-      e.flash = w.tick;
       if (v >= 1) {
         w.lampDim.delete(j);
         snuffOut(w, j);
@@ -2224,7 +2219,6 @@ function stepGhast(w, e, rnd2) {
     if (intruder.d <= 1) {
       if (w.tick >= e.timer) {
         e.timer = w.tick + 18;
-        e.flash = w.tick;
         intruder.e.hp -= 3;
         intruder.e.flash = w.tick;
       }
@@ -2329,7 +2323,6 @@ function stepAshen(w, e, rnd2) {
     if (prey.d <= 1) {
       if (w.tick >= e.timer) {
         e.timer = w.tick + 12;
-        e.flash = w.tick;
         prey.e.hp -= 10;
         prey.e.flash = w.tick;
         if (prey.e.hp <= 0) {
@@ -2578,7 +2571,6 @@ function stepBreacher(w, e, rnd2) {
     if (w.tick >= e.timer) {
       const braced = cls === 0 && w.tick - (e.sat ?? w.tick) > 30;
       e.timer = w.tick + (cls === 1 ? 20 : cls === 2 ? 17 : braced ? 7 : 14);
-      e.flash = w.tick;
       if (cls === 1) {
         fireGout(w, e.x, e.y, target.e.x, target.e.y, rnd2, isMarineTarget, 3);
       } else {
@@ -2970,7 +2962,6 @@ function torchNear(w, e, rnd2) {
             w.solidFuel[i] = 0;
             w.temp[i] = Math.min(1500, w.temp[i] + 180);
             e.timer = w.tick + 12;
-            e.flash = w.tick;
           }
           return true;
         }
@@ -3302,7 +3293,6 @@ function stepServitor(w, e, rnd2) {
     if (w.tick >= e.timer) {
       foe.e.hp -= 1;
       foe.e.flash = w.tick;
-      e.flash = w.tick;
       e.timer = w.tick + 24;
     }
     return;
@@ -3783,7 +3773,6 @@ function stepMilitor(w, e, rnd2) {
           foe.e.hp -= 2;
           foe.e.flash = w.tick;
         }
-        e.flash = w.tick;
         e.timer = w.tick + 8;
         if (foe.e.kind === EntKind.Brood) alarmHive(w, foe.e.x, foe.e.y);
       }
@@ -4177,7 +4166,6 @@ function stepShrub(w, e, rnd2) {
   if (foe && w.tick >= e.timer) {
     foe.e.hp -= 8;
     foe.e.flash = w.tick;
-    e.flash = w.tick;
     e.timer = w.tick + 50;
     return;
   }
@@ -4221,7 +4209,6 @@ function stepMound(w, e, rnd2) {
     if (w.tick >= e.timer) {
       prey.e.hp -= 40;
       prey.e.flash = w.tick;
-      e.flash = w.tick;
       e.timer = w.tick + (enraged ? 20 : 40);
       if (prey.e.hp <= 0) splatter(w, prey.e);
     }
