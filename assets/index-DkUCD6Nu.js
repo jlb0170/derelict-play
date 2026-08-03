@@ -7743,7 +7743,9 @@ function updateHud(w) {
   elTick.textContent = w.tick < 1e4 ? String(w.tick) : `${(w.tick / 1e3).toFixed(w.tick < 1e5 ? 1 : 0)}k`;
   elFps.textContent = fps.toFixed(0);
   elSpeed.textContent = paused ? "paused" : SPEED_LABELS[speedIdx];
-  elSpeed.parentElement.title = `${SPEED_TPS[speedIdx]} ticks per second`;
+  const speedTip = `ticks per second: ${SPEED_TPS[speedIdx]}`;
+  const speedWrap = elSpeed.parentElement;
+  if (speedWrap.title !== speedTip) speedWrap.title = speedTip;
   const latest = w.news[w.news.length - 1];
   if (latest) {
     const age = Math.max(0, (w.tick - latest.t) / 60 | 0);
